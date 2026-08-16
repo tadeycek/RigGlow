@@ -219,7 +219,7 @@ fn hardware_panel(frame: &mut Frame, app: &App, area: Rect) {
     if area.height >= 12 && app.settings.modules.disks {
         let panels = Layout::vertical([Constraint::Length(7), Constraint::Min(3)]).split(area);
         widgets::detail_grid(" HARDWARE ", rows, panels[0], frame, app);
-        widgets::filesystem_gauge(
+        widgets::filesystem_card(
             app.snapshot.static_info.filesystems.first(),
             app.snapshot.live.disk.read_bytes_per_sec,
             app.snapshot.live.disk.write_bytes_per_sec,
@@ -265,13 +265,22 @@ fn gpu_monitor(frame: &mut Frame, app: &App, area: Rect) {
     }
     let rows = Layout::vertical([Constraint::Length(3), Constraint::Min(4)]).split(area);
     let details = format!(
-        "{}{}",
+        "{}{}{}",
         live.frequency_mhz
             .map(|value| format!("{value} MHz"))
             .unwrap_or_else(|| "Sensor optional".into()),
         live.temperature_c
             .map(|value| format!(" · {value:.0}°C"))
-            .unwrap_or_default()
+            .unwrap_or_default(),
+        match (live.vram_used_bytes, live.vram_total_bytes) {
+            (Some(used), Some(total)) => format!(
+                " · VRAM {} / {}",
+                format_bytes(used as f64),
+                format_bytes(total as f64)
+            ),
+            (Some(used), None) => format!(" · VRAM {}", format_bytes(used as f64)),
+            _ => String::new(),
+        }
     );
     widgets::usage_gauge(
         " GPU LOAD ",
@@ -281,15 +290,19 @@ fn gpu_monitor(frame: &mut Frame, app: &App, area: Rect) {
         frame,
         app,
     );
-    widgets::line_chart(
-        widgets::LineChartSpec {
+    widgets::history_panel(
+        widgets::HistorySpec {
             title: format!(" GPU HISTORY  {} ", widgets::gpu_summary(app)),
-            primary: &app.gpu_history,
-            secondary: None,
-            max: 100.0,
-            middle_label: "50%".into(),
-            upper_label: "100%".into(),
-            color_index: 1,
+            series: vec![widgets::HistorySeries {
+                label: "LOAD",
+                value: live
+                    .usage_percent
+                    .map(|value| format!("{value:.0}%"))
+                    .unwrap_or_else(|| "N/A".into()),
+                history: &app.gpu_history,
+                max: 100.0,
+                color: app.theme().graph[1],
+            }],
         },
         rows[1],
         frame,
@@ -305,53 +318,72 @@ fn performance_panel(frame: &mut Frame, app: &App, area: Rect) {
     let charts =
         Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).split(area);
     let cpu = &app.snapshot.live.cpu;
-    widgets::line_chart(
-        widgets::LineChartSpec {
+    widgets::history_panel(
+        widgets::HistorySpec {
             title: format!(
-                " CPU + RAM  {:.0}% CPU · {:.0}% RAM · {} MHz{} ",
-                cpu.usage_percent,
-                app.snapshot.live.memory.percent(),
+                " CPU + RAM  {} MHz{} ",
                 cpu.frequency_mhz,
                 cpu.temperature_c
                     .map(|value| format!(" · {value:.0}°C"))
                     .unwrap_or_default()
             ),
-            primary: &app.cpu_history,
-            secondary: Some(&app.memory_history),
-            max: 100.0,
-            middle_label: "50%".into(),
-            upper_label: "100%".into(),
-            color_index: 0,
+            series: vec![
+                widgets::HistorySeries {
+                    label: "CPU",
+                    value: format!("{:.0}%", cpu.usage_percent),
+                    history: &app.cpu_history,
+                    max: 100.0,
+                    color: app.theme().graph[0],
+                },
+                widgets::HistorySeries {
+                    label: "RAM",
+                    value: format!("{:.0}%", app.snapshot.live.memory.percent()),
+                    history: &app.memory_history,
+                    max: 100.0,
+                    color: app.theme().graph[1],
+                },
+            ],
         },
         charts[0],
         frame,
         app,
     );
     let net = &app.snapshot.live.network;
-    let net_max = app
-        .network_down_history
-        .iter()
-        .chain(app.network_up_history.iter())
-        .copied()
-        .fold(1.0, f64::max);
-    widgets::line_chart(
-        widgets::LineChartSpec {
-            title: format!(
-                " NETWORK  ↓ {} · ↑ {} ",
-                format_rate(net.download_bytes_per_sec),
-                format_rate(net.upload_bytes_per_sec)
-            ),
-            primary: &app.network_down_history,
-            secondary: Some(&app.network_up_history),
-            max: net_max,
-            middle_label: format_rate(net_max / 2.0),
-            upper_label: format_rate(net_max),
-            color_index: 2,
+    let net_max = decaying_network_peak(app).max(1.0);
+    widgets::history_panel(
+        widgets::HistorySpec {
+            title: " NETWORK ".into(),
+            series: vec![
+                widgets::HistorySeries {
+                    label: "DOWN",
+                    value: format_rate(net.download_bytes_per_sec),
+                    history: &app.network_down_history,
+                    max: net_max,
+                    color: app.theme().graph[2],
+                },
+                widgets::HistorySeries {
+                    label: "UP",
+                    value: format_rate(net.upload_bytes_per_sec),
+                    history: &app.network_up_history,
+                    max: net_max,
+                    color: app.theme().graph[0],
+                },
+            ],
         },
         charts[1],
         frame,
         app,
     );
+}
+
+fn decaying_network_peak(app: &App) -> f64 {
+    app.network_down_history
+        .iter()
+        .chain(app.network_up_history.iter())
+        .rev()
+        .enumerate()
+        .map(|(age, value)| *value * 0.94_f64.powi(age as i32))
+        .fold(1.0, f64::max)
 }
 
 fn fallback(frame: &mut Frame, app: &App) {

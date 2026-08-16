@@ -7,8 +7,7 @@ use crate::{
 };
 use ratatui::{
     prelude::*,
-    symbols,
-    widgets::{Axis, Block, Borders, Chart, Dataset, Gauge, GraphType, Paragraph, Wrap},
+    widgets::{Block, Borders, Gauge, Paragraph, Wrap},
 };
 
 pub fn block(title: &str, app: &App) -> Block<'static> {
@@ -89,31 +88,44 @@ pub fn detail_grid(
 }
 
 pub fn core_grid(title: &str, cores: &[f32], area: Rect, frame: &mut Frame, app: &App) {
-    let half = area.width.saturating_sub(4) as usize / 2;
-    let mut lines = Vec::new();
-    for (row, pair) in cores.chunks(2).enumerate() {
-        let mut spans = Vec::new();
-        for (offset, usage) in pair.iter().enumerate() {
-            let index = row * 2 + offset + 1;
-            let bar = meter(*usage as f64, 7);
-            let text = format!("{index:02} {bar} {usage:>3.0}%");
-            let color = usage_color(*usage as f64, app);
-            spans.push(Span::styled(
-                format!("{text:<half$}"),
-                Style::default().fg(color),
-            ));
-        }
-        lines.push(Line::from(spans));
+    let outer = block(title, app);
+    let inner = outer.inner(area);
+    frame.render_widget(outer, area);
+
+    // Two independent paragraphs deliberately reserve half the card for each
+    // column. This avoids the visual drift that padding-based columns caused.
+    let columns =
+        Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).split(inner);
+    for (column, offset) in columns.iter().zip([0usize, 1]) {
+        let meter_width = column.width.saturating_sub(9).clamp(3, 12) as usize;
+        let lines = cores
+            .iter()
+            .skip(offset)
+            .step_by(2)
+            .enumerate()
+            .map(|(row, usage)| {
+                let index = row * 2 + offset + 1;
+                Line::from(vec![
+                    Span::styled(
+                        format!("{index:02} "),
+                        Style::default().fg(app.theme().secondary),
+                    ),
+                    Span::styled(
+                        meter(*usage as f64, meter_width),
+                        Style::default().fg(usage_color(*usage as f64, app)),
+                    ),
+                    Span::styled(
+                        format!(" {usage:>3.0}%"),
+                        Style::default().fg(app.theme().foreground),
+                    ),
+                ])
+            })
+            .collect::<Vec<_>>();
+        frame.render_widget(Paragraph::new(lines).style(surface_style(app)), *column);
     }
-    frame.render_widget(
-        Paragraph::new(lines)
-            .block(block(title, app))
-            .style(surface_style(app)),
-        area,
-    );
 }
 
-pub fn filesystem_gauge(
+pub fn filesystem_card(
     filesystem: Option<&crate::collectors::disks::FilesystemInfo>,
     read_rate: f64,
     write_rate: f64,
@@ -136,15 +148,52 @@ pub fn filesystem_gauge(
     } else {
         fs.used_bytes as f64 / fs.total_bytes as f64 * 100.0
     };
-    let detail = format!(
-        "{}  {} / {}  ↓ {}  ↑ {}",
-        fs.mount_point,
-        format_bytes(fs.used_bytes as f64),
-        format_bytes(fs.total_bytes as f64),
-        format_rate(read_rate),
-        format_rate(write_rate)
+    let meter_width = area.width.saturating_sub(16).clamp(8, 32) as usize;
+    let lines = vec![
+        Line::from(vec![
+            Span::styled("  ", Style::default()),
+            Span::styled(
+                format!("{} ", clip(&fs.mount_point, 10)),
+                Style::default().fg(app.theme().secondary),
+            ),
+            Span::styled(
+                meter(percent, meter_width),
+                Style::default().fg(usage_color(percent, app)),
+            ),
+            Span::styled(
+                format!(" {percent:.0}%"),
+                Style::default().fg(app.theme().foreground),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("  USED ", Style::default().fg(app.theme().muted)),
+            Span::styled(
+                format!(
+                    "{} / {}",
+                    format_bytes(fs.used_bytes as f64),
+                    format_bytes(fs.total_bytes as f64)
+                ),
+                Style::default().fg(app.theme().foreground),
+            ),
+            Span::styled("   READ ", Style::default().fg(app.theme().muted)),
+            Span::styled(
+                format_rate(read_rate),
+                Style::default().fg(app.theme().graph[0]),
+            ),
+            Span::styled("   WRITE ", Style::default().fg(app.theme().muted)),
+            Span::styled(
+                format_rate(write_rate),
+                Style::default().fg(app.theme().graph[1]),
+            ),
+        ]),
+    ];
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(block(" DISK / I-O ", app))
+            .style(surface_style(app))
+            .wrap(Wrap { trim: true }),
+        area,
     );
-    usage_gauge(" DISK / I-O ", percent, detail, area, frame, app);
 }
 
 pub fn usage_gauge(
@@ -180,57 +229,44 @@ pub fn usage_gauge(
     );
 }
 
-pub struct LineChartSpec<'a> {
-    pub title: String,
-    pub primary: &'a VecDeque<f64>,
-    pub secondary: Option<&'a VecDeque<f64>>,
+pub struct HistorySeries<'a> {
+    pub label: &'a str,
+    pub value: String,
+    pub history: &'a VecDeque<f64>,
     pub max: f64,
-    pub middle_label: String,
-    pub upper_label: String,
-    pub color_index: usize,
+    pub color: Color,
 }
 
-pub fn line_chart(spec: LineChartSpec<'_>, area: Rect, frame: &mut Frame, app: &App) {
-    let primary_data = chart_points(spec.primary);
-    let mut datasets = vec![
-        Dataset::default()
-            .name("primary")
-            .marker(symbols::Marker::HalfBlock)
-            .graph_type(GraphType::Line)
-            .style(Style::default().fg(app.theme().graph[spec.color_index % 3]))
-            .data(&primary_data),
-    ];
-    let secondary_data = spec.secondary.map(chart_points);
-    if let Some(data) = secondary_data.as_ref() {
-        datasets.push(
-            Dataset::default()
-                .name("secondary")
-                .marker(symbols::Marker::HalfBlock)
-                .graph_type(GraphType::Line)
-                .style(Style::default().fg(app.theme().graph[(spec.color_index + 1) % 3]))
-                .data(data),
-        );
-    }
-    let x_max = spec.primary.len().max(2) as f64 - 1.0;
-    frame.render_widget(
-        Chart::new(datasets)
-            .block(block(&spec.title, app))
-            .style(surface_style(app))
-            .x_axis(Axis::default().bounds([0.0, x_max]).labels(vec![
-                Span::styled("older", Style::default().fg(app.theme().muted)),
-                Span::styled("now", Style::default().fg(app.theme().muted)),
-            ]))
-            .y_axis(
-                Axis::default()
-                    .bounds([0.0, spec.max.max(1.0)])
-                    .labels(vec![
-                        Span::styled("0", Style::default().fg(app.theme().muted)),
-                        Span::styled(spec.middle_label, Style::default().fg(app.theme().muted)),
-                        Span::styled(spec.upper_label, Style::default().fg(app.theme().muted)),
-                    ]),
-            ),
-        area,
-    );
+pub struct HistorySpec<'a> {
+    pub title: String,
+    pub series: Vec<HistorySeries<'a>>,
+}
+
+pub fn history_panel(spec: HistorySpec<'_>, area: Rect, frame: &mut Frame, app: &App) {
+    let outer = block(&spec.title, app);
+    let inner = outer.inner(area);
+    frame.render_widget(outer, area);
+    let plot_width = inner.width.saturating_sub(19) as usize;
+    let lines = spec
+        .series
+        .into_iter()
+        .take(inner.height as usize)
+        .map(|series| {
+            let bars = history_bars(series.history, series.max, plot_width);
+            Line::from(vec![
+                Span::styled(
+                    format!(" {:<4}", series.label),
+                    Style::default().fg(app.theme().secondary).bold(),
+                ),
+                Span::styled(
+                    format!("{:>9} ", clip(&series.value, 9)),
+                    Style::default().fg(app.theme().foreground),
+                ),
+                Span::styled(bars, Style::default().fg(series.color)),
+            ])
+        })
+        .collect::<Vec<_>>();
+    frame.render_widget(Paragraph::new(lines).style(surface_style(app)), inner);
 }
 
 pub fn live_rows(app: &App) -> Vec<(String, String)> {
@@ -290,7 +326,13 @@ pub fn gpu_summary(app: &App) -> String {
     if let Some(value) = gpu.frequency_mhz {
         parts.push(format!("{value} MHz"));
     }
-    if let Some(used) = gpu.vram_used_bytes {
+    if let (Some(used), Some(total)) = (gpu.vram_used_bytes, gpu.vram_total_bytes) {
+        parts.push(format!(
+            "VRAM {} / {}",
+            format_bytes(used as f64),
+            format_bytes(total as f64)
+        ));
+    } else if let Some(used) = gpu.vram_used_bytes {
         parts.push(format!("VRAM {}", format_bytes(used as f64)));
     }
     parts.join(" · ")
@@ -303,12 +345,27 @@ pub fn battery_summary(app: &App) -> String {
         .map(|value| format!("{value:.0}% {}", battery.status))
         .unwrap_or_else(|| battery.status.clone())
 }
-fn chart_points(history: &VecDeque<f64>) -> Vec<(f64, f64)> {
-    history
-        .iter()
-        .enumerate()
-        .map(|(index, value)| (index as f64, *value))
-        .collect()
+fn history_bars(history: &VecDeque<f64>, max: f64, width: usize) -> String {
+    const LEVELS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+    if width == 0 {
+        return String::new();
+    }
+    let values = if history.len() > width {
+        history
+            .iter()
+            .collect::<Vec<_>>()
+            .chunks((history.len() as f64 / width as f64).ceil() as usize)
+            .map(|chunk| chunk.iter().copied().copied().fold(0.0, f64::max))
+            .collect::<Vec<_>>()
+    } else {
+        history.iter().copied().collect::<Vec<_>>()
+    };
+    let mut bars = " ".repeat(width.saturating_sub(values.len()));
+    for value in values.into_iter().take(width) {
+        let index = ((value / max.max(1.0)) * (LEVELS.len() - 1) as f64).round() as usize;
+        bars.push(LEVELS[index.min(LEVELS.len() - 1)]);
+    }
+    bars
 }
 fn meter(percent: f64, width: usize) -> String {
     let filled = ((percent.clamp(0.0, 100.0) / 100.0) * width as f64).round() as usize;
