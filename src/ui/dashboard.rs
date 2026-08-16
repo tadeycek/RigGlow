@@ -14,7 +14,7 @@ use ratatui::{
 pub fn render(frame: &mut Frame, app: &App) {
     let area = frame.area();
     frame.render_widget(
-        ratatui::widgets::Block::default().style(Style::default().bg(app.theme().background)),
+        ratatui::widgets::Block::default().style(widgets::surface_style(app)),
         area,
     );
     if area.width < 38 || area.height < 8 {
@@ -54,7 +54,10 @@ fn title(frame: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(app.theme().secondary),
         ),
     ]);
-    frame.render_widget(Paragraph::new(title), area);
+    frame.render_widget(
+        Paragraph::new(title).style(widgets::surface_style(app)),
+        area,
+    );
 }
 
 fn status(frame: &mut Frame, app: &App, area: Rect) {
@@ -64,7 +67,8 @@ fn status(frame: &mut Frame, app: &App, area: Rect) {
         " [T] Theme  [A] ASCII  [G] Graphs  [L] Logo  [C] Compact  [S] Snapshot  [R] Refresh  [Q] Quit  [?] Help"
     };
     frame.render_widget(
-        Paragraph::new(Line::styled(text, Style::default().fg(app.theme().muted))),
+        Paragraph::new(Line::styled(text, Style::default().fg(app.theme().muted)))
+            .style(widgets::surface_style(app)),
         area,
     );
 }
@@ -80,6 +84,7 @@ fn large(frame: &mut Frame, app: &App, area: Rect) {
         frame.render_widget(
             Paragraph::new(lines)
                 .block(widgets::block(" OS IDENTITY ", app))
+                .style(widgets::surface_style(app))
                 .wrap(Wrap { trim: false }),
             left[0],
         );
@@ -333,7 +338,7 @@ fn fallback(frame: &mut Frame, app: &App) {
     );
     frame.render_widget(
         Paragraph::new(text)
-            .style(Style::default().fg(app.theme().foreground))
+            .style(widgets::surface_style(app).fg(app.theme().foreground))
             .wrap(Wrap { trim: true }),
         frame.area(),
     );

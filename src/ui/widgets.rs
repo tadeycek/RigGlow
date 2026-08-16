@@ -3,6 +3,7 @@ use std::collections::VecDeque;
 use crate::{
     app::App,
     output::{format_bytes, format_rate},
+    theme,
 };
 use ratatui::{
     prelude::*,
@@ -13,11 +14,16 @@ use ratatui::{
 pub fn block(title: &str, app: &App) -> Block<'static> {
     Block::default()
         .borders(Borders::ALL)
+        .style(surface_style(app))
         .border_style(Style::default().fg(app.theme().border))
         .title(Line::styled(
             title.to_owned(),
             Style::default().fg(app.theme().primary).bold(),
         ))
+}
+
+pub fn surface_style(app: &App) -> Style {
+    Style::default().bg(theme::surface(app.theme().background))
 }
 
 pub fn info_panel(
@@ -42,6 +48,7 @@ pub fn info_panel(
     frame.render_widget(
         Paragraph::new(text)
             .block(block(title, app))
+            .style(surface_style(app))
             .wrap(Wrap { trim: true }),
         area,
     );
@@ -75,6 +82,7 @@ pub fn detail_grid(
     frame.render_widget(
         Paragraph::new(lines)
             .block(block(title, app))
+            .style(surface_style(app))
             .wrap(Wrap { trim: true }),
         area,
     );
@@ -99,7 +107,11 @@ pub fn usage_gauge(
     frame.render_widget(
         Gauge::default()
             .block(block(label, app))
-            .gauge_style(Style::default().fg(color).bg(app.theme().background))
+            .gauge_style(
+                Style::default()
+                    .fg(color)
+                    .bg(theme::surface(app.theme().background)),
+            )
             .ratio(value / 100.0)
             .label(Span::styled(
                 format!("{detail}  {value:.0}%"),
@@ -124,7 +136,7 @@ pub fn line_chart(spec: LineChartSpec<'_>, area: Rect, frame: &mut Frame, app: &
     let mut datasets = vec![
         Dataset::default()
             .name("primary")
-            .marker(symbols::Marker::Braille)
+            .marker(symbols::Marker::HalfBlock)
             .graph_type(GraphType::Line)
             .style(Style::default().fg(app.theme().graph[spec.color_index % 3]))
             .data(&primary_data),
@@ -134,7 +146,7 @@ pub fn line_chart(spec: LineChartSpec<'_>, area: Rect, frame: &mut Frame, app: &
         datasets.push(
             Dataset::default()
                 .name("secondary")
-                .marker(symbols::Marker::Braille)
+                .marker(symbols::Marker::HalfBlock)
                 .graph_type(GraphType::Line)
                 .style(Style::default().fg(app.theme().graph[(spec.color_index + 1) % 3]))
                 .data(data),
@@ -144,6 +156,7 @@ pub fn line_chart(spec: LineChartSpec<'_>, area: Rect, frame: &mut Frame, app: &
     frame.render_widget(
         Chart::new(datasets)
             .block(block(&spec.title, app))
+            .style(surface_style(app))
             .x_axis(Axis::default().bounds([0.0, x_max]).labels(vec![
                 Span::styled("older", Style::default().fg(app.theme().muted)),
                 Span::styled("now", Style::default().fg(app.theme().muted)),

@@ -26,3 +26,16 @@ pub fn color_hex(color: Color) -> String {
         _ => "#aaaaaa".into(),
     }
 }
+
+/// A lifted, non-default surface ensures terminal emulators such as Kitty keep
+/// RigGlow panels opaque even when their default terminal background is transparent.
+pub fn surface(color: Color) -> Color {
+    match color {
+        Color::Rgb(red, green, blue) => Color::Rgb(
+            red.saturating_add(7),
+            green.saturating_add(7),
+            blue.saturating_add(9),
+        ),
+        other => other,
+    }
+}
