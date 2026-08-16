@@ -17,6 +17,7 @@ pub struct StaticSnapshot {
     pub hardware: system::HardwareInfo,
     pub gpu: gpu::GpuInfo,
     pub disks: Vec<disks::DiskInfo>,
+    pub filesystems: Vec<disks::FilesystemInfo>,
     pub battery: battery::BatteryInfo,
     pub display: display::DisplayInfo,
     pub network: network::NetworkInfo,

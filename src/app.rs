@@ -85,6 +85,7 @@ impl App {
         if let Ok(found) = disks.collect_static() {
             self.snapshot.static_info.disks = found;
         }
+        self.snapshot.static_info.filesystems = disks.collect_filesystems();
         let gpu = collectors::gpu::LinuxGpuCollector;
         if let Ok(found) = gpu.collect_static() {
             self.snapshot.static_info.gpu = found;

@@ -1,4 +1,4 @@
-use std::{fs, time::Instant};
+use std::{fs, process::Command, time::Instant};
 
 use serde::Serialize;
 
@@ -9,6 +9,14 @@ pub struct DiskInfo {
     pub model: String,
     pub kind: String,
     pub capacity_bytes: u64,
+}
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct FilesystemInfo {
+    pub source: String,
+    pub mount_point: String,
+    pub total_bytes: u64,
+    pub used_bytes: u64,
+    pub available_bytes: u64,
 }
 #[derive(Debug, Clone, Copy, Serialize, Default)]
 pub struct IoRate {
@@ -63,6 +71,51 @@ impl StaticCollector<Vec<DiskInfo>> for LinuxDiskCollector {
         }
         Ok(disks)
     }
+}
+impl LinuxDiskCollector {
+    /// Filesystem capacity is static metadata; `df` is never called from the live refresh loop.
+    pub fn collect_filesystems(&self) -> Vec<FilesystemInfo> {
+        let Ok(output) = Command::new("df")
+            .args([
+                "-B1",
+                "-x",
+                "tmpfs",
+                "-x",
+                "devtmpfs",
+                "--output=source,size,used,avail,target",
+            ])
+            .output()
+        else {
+            return Vec::new();
+        };
+        if !output.status.success() {
+            return Vec::new();
+        }
+        String::from_utf8(output.stdout)
+            .ok()
+            .into_iter()
+            .flat_map(|text| {
+                text.lines()
+                    .skip(1)
+                    .filter_map(parse_filesystem)
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+}
+
+fn parse_filesystem(line: &str) -> Option<FilesystemInfo> {
+    let fields: Vec<_> = line.split_whitespace().collect();
+    if fields.len() < 5 {
+        return None;
+    }
+    Some(FilesystemInfo {
+        source: fields[0].into(),
+        total_bytes: fields[1].parse().ok()?,
+        used_bytes: fields[2].parse().ok()?,
+        available_bytes: fields[3].parse().ok()?,
+        mount_point: fields[4..].join(" "),
+    })
 }
 impl LiveCollector<IoRate> for LinuxDiskCollector {
     fn refresh_live(&mut self) -> anyhow::Result<IoRate> {

@@ -131,6 +131,22 @@ fn system_panel(frame: &mut Frame, app: &App, area: Rect) {
         );
         return;
     }
+    if area.height >= 11 && app.settings.modules.cpu {
+        let rows = Layout::vertical([Constraint::Length(6), Constraint::Min(3)]).split(area);
+        system_grid(frame, app, rows[0]);
+        widgets::core_grid(
+            " CPU CORES ",
+            &app.snapshot.live.cpu.per_core_percent,
+            rows[1],
+            frame,
+            app,
+        );
+    } else {
+        system_grid(frame, app, area);
+    }
+}
+
+fn system_grid(frame: &mut Frame, app: &App, area: Rect) {
     let s = &app.snapshot.static_info;
     widgets::detail_grid(
         " SYSTEM ",
@@ -200,7 +216,20 @@ fn hardware_panel(frame: &mut Frame, app: &App, area: Rect) {
     if modules.battery {
         rows.push(("Battery".into(), widgets::battery_summary(app)));
     }
-    widgets::detail_grid(" HARDWARE ", rows, area, frame, app);
+    if area.height >= 12 && app.settings.modules.disks {
+        let panels = Layout::vertical([Constraint::Length(7), Constraint::Min(3)]).split(area);
+        widgets::detail_grid(" HARDWARE ", rows, panels[0], frame, app);
+        widgets::filesystem_gauge(
+            app.snapshot.static_info.filesystems.first(),
+            app.snapshot.live.disk.read_bytes_per_sec,
+            app.snapshot.live.disk.write_bytes_per_sec,
+            panels[1],
+            frame,
+            app,
+        );
+    } else {
+        widgets::detail_grid(" HARDWARE ", rows, area, frame, app);
+    }
 }
 
 fn edge_summary(frame: &mut Frame, app: &App, area: Rect) {

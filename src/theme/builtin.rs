@@ -3,7 +3,21 @@ use ratatui::style::Color;
 const fn rgb(r: u8, g: u8, b: u8) -> Color {
     Color::Rgb(r, g, b)
 }
-const THEMES: [Theme; 9] = [
+const THEMES: [Theme; 10] = [
+    Theme {
+        name: "terminal",
+        background: Color::Reset,
+        foreground: Color::Reset,
+        muted: Color::DarkGray,
+        primary: Color::Cyan,
+        secondary: Color::Magenta,
+        accent: Color::Green,
+        good: Color::Green,
+        warning: Color::Yellow,
+        critical: Color::Red,
+        border: Color::DarkGray,
+        graph: [Color::Cyan, Color::Magenta, Color::Green],
+    },
     Theme {
         name: "catppuccin-mocha",
         background: rgb(30, 30, 46),

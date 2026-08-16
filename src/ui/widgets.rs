@@ -88,6 +88,65 @@ pub fn detail_grid(
     );
 }
 
+pub fn core_grid(title: &str, cores: &[f32], area: Rect, frame: &mut Frame, app: &App) {
+    let half = area.width.saturating_sub(4) as usize / 2;
+    let mut lines = Vec::new();
+    for (row, pair) in cores.chunks(2).enumerate() {
+        let mut spans = Vec::new();
+        for (offset, usage) in pair.iter().enumerate() {
+            let index = row * 2 + offset + 1;
+            let bar = meter(*usage as f64, 7);
+            let text = format!("{index:02} {bar} {usage:>3.0}%");
+            let color = usage_color(*usage as f64, app);
+            spans.push(Span::styled(
+                format!("{text:<half$}"),
+                Style::default().fg(color),
+            ));
+        }
+        lines.push(Line::from(spans));
+    }
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(block(title, app))
+            .style(surface_style(app)),
+        area,
+    );
+}
+
+pub fn filesystem_gauge(
+    filesystem: Option<&crate::collectors::disks::FilesystemInfo>,
+    read_rate: f64,
+    write_rate: f64,
+    area: Rect,
+    frame: &mut Frame,
+    app: &App,
+) {
+    let Some(fs) = filesystem else {
+        info_panel(
+            " DISK ",
+            vec![("Status".into(), "No mounted filesystem data".into())],
+            area,
+            frame,
+            app,
+        );
+        return;
+    };
+    let percent = if fs.total_bytes == 0 {
+        0.0
+    } else {
+        fs.used_bytes as f64 / fs.total_bytes as f64 * 100.0
+    };
+    let detail = format!(
+        "{}  {} / {}  ↓ {}  ↑ {}",
+        fs.mount_point,
+        format_bytes(fs.used_bytes as f64),
+        format_bytes(fs.total_bytes as f64),
+        format_rate(read_rate),
+        format_rate(write_rate)
+    );
+    usage_gauge(" DISK / I-O ", percent, detail, area, frame, app);
+}
+
 pub fn usage_gauge(
     label: &str,
     percent: f64,
@@ -250,6 +309,23 @@ fn chart_points(history: &VecDeque<f64>) -> Vec<(f64, f64)> {
         .enumerate()
         .map(|(index, value)| (index as f64, *value))
         .collect()
+}
+fn meter(percent: f64, width: usize) -> String {
+    let filled = ((percent.clamp(0.0, 100.0) / 100.0) * width as f64).round() as usize;
+    format!(
+        "{}{}",
+        "█".repeat(filled),
+        "░".repeat(width.saturating_sub(filled))
+    )
+}
+fn usage_color(value: f64, app: &App) -> Color {
+    if value > 90.0 {
+        app.theme().critical
+    } else if value > 75.0 {
+        app.theme().warning
+    } else {
+        app.theme().good
+    }
 }
 fn clip(value: &str, width: usize) -> String {
     if width <= 1 {
