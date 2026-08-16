@@ -20,7 +20,7 @@ RigGlow is a Linux-first live hardware fetcher: Fastfetch-style machine informat
 ## Features
 
 - Linux `/proc` and `/sys` collectors with no root requirement.
-- Live CPU, memory, disk-I/O and network rates with compact histories.
+- Live CPU, GPU, memory, disk-I/O and network rates with labelled CPU/RAM, GPU, and download/upload history charts.
 - OS, host, kernel, uptime, desktop, terminal, DMI, CPU, GPU, disk, battery, display and network metadata when available.
 - Nine built-in themes: Catppuccin Mocha, Dracula, Nord, Gruvbox, Tokyo Night, Synthwave, Matrix, Arch Blue, and Monochrome.
 - Fastfetch-style OS logos for 20 popular Linux distributions—Arch, EndeavourOS, Ubuntu, Fedora, Debian, Mint, Manjaro, openSUSE, Pop!_OS, Kali, NixOS, Gentoo, RHEL, Rocky, AlmaLinux, Void, Solus, elementary, Zorin, and MX—plus retro, cat, and RigGlow artwork.

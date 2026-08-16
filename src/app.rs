@@ -12,8 +12,10 @@ pub struct App {
     pub settings: Settings,
     pub snapshot: collectors::Snapshot,
     pub cpu_history: VecDeque<f64>,
+    pub gpu_history: VecDeque<f64>,
     pub memory_history: VecDeque<f64>,
-    pub network_history: VecDeque<f64>,
+    pub network_down_history: VecDeque<f64>,
+    pub network_up_history: VecDeque<f64>,
     pub show_help: bool,
     pub show_graphs: bool,
     pub show_logo: bool,
@@ -22,6 +24,7 @@ pub struct App {
     theme_index: usize,
     ascii_index: usize,
     cpu: collectors::cpu::LinuxCpuCollector,
+    gpu: collectors::gpu::LinuxGpuLiveCollector,
     memory: collectors::memory::LinuxMemoryCollector,
     disk: collectors::disks::LinuxDiskCollector,
     network: collectors::network::LinuxNetworkCollector,
@@ -44,11 +47,14 @@ impl App {
             settings,
             snapshot: collectors::Snapshot::default(),
             cpu_history: VecDeque::new(),
+            gpu_history: VecDeque::new(),
             memory_history: VecDeque::new(),
-            network_history: VecDeque::new(),
+            network_down_history: VecDeque::new(),
+            network_up_history: VecDeque::new(),
             theme_index,
             ascii_index: 0,
             cpu: collectors::cpu::LinuxCpuCollector::new(),
+            gpu: collectors::gpu::LinuxGpuLiveCollector::new(),
             memory: collectors::memory::LinuxMemoryCollector::new(),
             disk: collectors::disks::LinuxDiskCollector::new(),
             network,
@@ -100,6 +106,9 @@ impl App {
         if let Ok(value) = self.cpu.refresh_live() {
             self.snapshot.live.cpu = value;
         }
+        if let Ok(value) = self.gpu.refresh_live() {
+            self.snapshot.live.gpu = value;
+        }
         if let Ok(value) = self.memory.refresh_live() {
             self.snapshot.live.memory = value;
         }
@@ -113,11 +122,20 @@ impl App {
         self.snapshot.static_info.battery = self.snapshot.live.battery.clone();
         let cpu = self.snapshot.live.cpu.usage_percent as f64;
         let memory = self.snapshot.live.memory.percent();
-        let net = self.snapshot.live.network.download_bytes_per_sec
-            + self.snapshot.live.network.upload_bytes_per_sec;
         push(&mut self.cpu_history, cpu);
+        push(
+            &mut self.gpu_history,
+            self.snapshot.live.gpu.usage_percent.unwrap_or(0.0) as f64,
+        );
         push(&mut self.memory_history, memory);
-        push(&mut self.network_history, net);
+        push(
+            &mut self.network_down_history,
+            self.snapshot.live.network.download_bytes_per_sec,
+        );
+        push(
+            &mut self.network_up_history,
+            self.snapshot.live.network.upload_bytes_per_sec,
+        );
     }
 }
 fn push(history: &mut VecDeque<f64>, sample: f64) {

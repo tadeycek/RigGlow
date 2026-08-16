@@ -1,5 +1,11 @@
 use super::{help, widgets};
-use crate::{app::App, ascii, ascii::builtin::distro_name, collectors::system::uptime_human};
+use crate::{
+    app::App,
+    ascii,
+    ascii::builtin::distro_name,
+    collectors::system::uptime_human,
+    output::{format_bytes, format_rate},
+};
 use ratatui::{
     prelude::*,
     widgets::{Paragraph, Wrap},
@@ -32,6 +38,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         help::render(frame, app);
     }
 }
+
 fn title(frame: &mut Frame, app: &App, area: Rect) {
     let glow = if app.settings.animation && app.animation_step.is_multiple_of(2) {
         app.theme().accent
@@ -41,10 +48,7 @@ fn title(frame: &mut Frame, app: &App, area: Rect) {
     let title = Line::from(vec![
         Span::styled(" RIG", Style::default().fg(app.theme().primary).bold()),
         Span::styled("GLOW", Style::default().fg(glow).bold()),
-        Span::styled(
-            "  LIVE HARDWARE FETCHER",
-            Style::default().fg(app.theme().muted),
-        ),
+        Span::styled("  HARDWARE COCKPIT", Style::default().fg(app.theme().muted)),
         Span::styled(
             format!("  ◈ {}", app.theme().name),
             Style::default().fg(app.theme().secondary),
@@ -52,6 +56,7 @@ fn title(frame: &mut Frame, app: &App, area: Rect) {
     ]);
     frame.render_widget(Paragraph::new(title), area);
 }
+
 fn status(frame: &mut Frame, app: &App, area: Rect) {
     let text = if app.show_help {
         " [?] Close help"
@@ -63,167 +68,267 @@ fn status(frame: &mut Frame, app: &App, area: Rect) {
         area,
     );
 }
+
 fn large(frame: &mut Frame, app: &App, area: Rect) {
     let columns =
-        Layout::horizontal([Constraint::Percentage(37), Constraint::Percentage(63)]).split(area);
+        Layout::horizontal([Constraint::Percentage(40), Constraint::Percentage(60)]).split(area);
+    let left = Layout::vertical([Constraint::Percentage(65), Constraint::Percentage(35)])
+        .split(columns[0]);
     if app.show_logo {
         let lines = ascii::load(&app.settings.ascii.source, &distro_name(), app.theme())
             .unwrap_or_default();
         frame.render_widget(
             Paragraph::new(lines)
-                .block(widgets::block(" IDENTITY ", app))
+                .block(widgets::block(" OS IDENTITY ", app))
                 .wrap(Wrap { trim: false }),
-            columns[0],
+            left[0],
         );
+    } else {
+        edge_summary(frame, app, left[0]);
     }
-    let rows = Layout::vertical([
-        Constraint::Percentage(39),
-        Constraint::Percentage(29),
-        Constraint::Percentage(32),
+    gpu_monitor(frame, app, left[1]);
+
+    let right = Layout::vertical([
+        Constraint::Percentage(31),
+        Constraint::Percentage(35),
+        Constraint::Percentage(34),
     ])
     .split(columns[1]);
-    system_panel(frame, app, rows[0]);
-    hardware_panel(frame, app, rows[1]);
-    live_panel(frame, app, rows[2]);
+    system_panel(frame, app, right[0]);
+    hardware_panel(frame, app, right[1]);
+    performance_panel(frame, app, right[2]);
 }
+
 fn small(frame: &mut Frame, app: &App, area: Rect) {
-    let mut constraints = Vec::new();
-    if app.show_logo && area.height >= 17 {
-        constraints.push(Constraint::Length(8));
-    }
-    constraints.push(Constraint::Percentage(55));
-    constraints.push(Constraint::Percentage(45));
-    let chunks = Layout::vertical(constraints).split(area);
-    let mut at = 0;
-    if app.show_logo && area.height >= 17 {
-        let lines = ascii::load(&app.settings.ascii.source, &distro_name(), app.theme())
-            .unwrap_or_default();
-        frame.render_widget(
-            Paragraph::new(lines).block(widgets::block(" RIGGLOW ", app)),
-            chunks[0],
-        );
-        at = 1;
-    }
-    system_panel(frame, app, chunks[at]);
-    if chunks.len() > at + 1 {
-        if app.show_graphs && chunks[at + 1].height >= 8 {
-            live_panel(frame, app, chunks[at + 1]);
-        } else {
-            widgets::info_panel(
-                " LIVE ",
-                widgets::live_rows(app),
-                chunks[at + 1],
-                frame,
-                app,
-            );
-        }
+    let chunks = Layout::vertical([
+        Constraint::Percentage(42),
+        Constraint::Percentage(30),
+        Constraint::Percentage(28),
+    ])
+    .split(area);
+    system_panel(frame, app, chunks[0]);
+    hardware_panel(frame, app, chunks[1]);
+    if app.show_graphs && chunks[2].height >= 8 {
+        performance_panel(frame, app, chunks[2]);
+    } else {
+        widgets::info_panel(" LIVE ", widgets::live_rows(app), chunks[2], frame, app);
     }
 }
+
 fn system_panel(frame: &mut Frame, app: &App, area: Rect) {
+    if !app.settings.modules.system {
+        widgets::info_panel(
+            " SYSTEM ",
+            vec![("Status".into(), "Hidden by configuration".into())],
+            area,
+            frame,
+            app,
+        );
+        return;
+    }
     let s = &app.snapshot.static_info;
-    widgets::info_panel(
+    widgets::detail_grid(
         " SYSTEM ",
         vec![
             ("OS".into(), s.system.os.clone()),
-            ("Host".into(), s.system.hostname.clone()),
             ("Kernel".into(), s.system.kernel.clone()),
+            ("Host".into(), s.system.hostname.clone()),
             ("Uptime".into(), uptime_human(s.system.uptime_seconds)),
             ("Desktop".into(), s.system.desktop.clone()),
             ("Shell".into(), s.system.shell.clone()),
+            ("Terminal".into(), s.system.terminal.clone()),
+            (
+                "LAN".into(),
+                format!("{} · {}", s.network.interface, s.network.local_ip),
+            ),
         ],
         area,
         frame,
         app,
     );
 }
+
 fn hardware_panel(frame: &mut Frame, app: &App, area: Rect) {
     let s = &app.snapshot.static_info;
-    let mut rows = Vec::new();
-    if app.settings.modules.cpu {
+    let disk = s
+        .disks
+        .first()
+        .map(|d| format!("{} · {}", d.kind, format_bytes(d.capacity_bytes as f64)))
+        .unwrap_or_else(|| "Unknown".into());
+    let modules = &app.settings.modules;
+    let mut rows = vec![
+        (
+            "Machine".into(),
+            format!("{} {}", s.hardware.manufacturer, s.hardware.model),
+        ),
+        ("Board".into(), s.hardware.board.clone()),
+        ("BIOS".into(), s.hardware.bios.clone()),
+    ];
+    if modules.cpu {
         rows.push(("CPU".into(), s.hardware.cpu_model.clone()));
         rows.push((
             "Cores".into(),
             format!(
-                "{} physical / {} logical",
+                "{}P / {}L",
                 s.hardware.physical_cpus, s.hardware.logical_cpus
             ),
         ));
     }
-    if app.settings.modules.gpu {
-        rows.push(("GPU".into(), s.gpu.model.clone()));
-    }
-    if app.settings.modules.disks {
+    if modules.memory {
         rows.push((
-            "Disk".into(),
-            s.disks
-                .first()
-                .map(|d| d.model.clone())
-                .unwrap_or_else(|| "Unknown".into()),
+            "Memory".into(),
+            format_bytes(s.hardware.total_memory_bytes as f64),
         ));
     }
-    if app.settings.modules.display {
-        rows.push(("Display".into(), s.display.resolution.clone()));
+    if modules.gpu {
+        rows.push(("GPU".into(), s.gpu.model.clone()));
     }
-    widgets::info_panel(" HARDWARE ", rows, area, frame, app);
+    if modules.disks {
+        rows.push(("Storage".into(), disk));
+    }
+    if modules.display {
+        rows.push((
+            "Display".into(),
+            format!("{} @ {}", s.display.resolution, s.display.refresh_rate),
+        ));
+    }
+    if modules.battery {
+        rows.push(("Battery".into(), widgets::battery_summary(app)));
+    }
+    widgets::detail_grid(" HARDWARE ", rows, area, frame, app);
 }
-fn live_panel(frame: &mut Frame, app: &App, area: Rect) {
-    if !app.show_graphs || area.height < 10 {
-        widgets::info_panel(" LIVE ", widgets::live_rows(app), area, frame, app);
+
+fn edge_summary(frame: &mut Frame, app: &App, area: Rect) {
+    let s = &app.snapshot.static_info;
+    widgets::detail_grid(
+        " AT A GLANCE ",
+        vec![
+            ("GPU".into(), s.gpu.model.clone()),
+            ("Network".into(), s.network.interface.clone()),
+            ("IP".into(), s.network.local_ip.clone()),
+            ("Battery".into(), widgets::battery_summary(app)),
+        ],
+        area,
+        frame,
+        app,
+    );
+}
+
+fn gpu_monitor(frame: &mut Frame, app: &App, area: Rect) {
+    let live = &app.snapshot.live.gpu;
+    if !app.show_graphs || area.height < 8 {
+        widgets::info_panel(
+            " GPU MONITOR ",
+            vec![
+                ("Model".into(), app.snapshot.static_info.gpu.model.clone()),
+                ("Live".into(), widgets::gpu_summary(app)),
+            ],
+            area,
+            frame,
+            app,
+        );
         return;
     }
-    let chunks = Layout::vertical([
-        Constraint::Length(3),
-        Constraint::Length(3),
-        Constraint::Min(3),
-    ])
-    .split(area);
-    let live = &app.snapshot.live;
-    widgets::usage_gauge(
-        " CPU ",
-        live.cpu.usage_percent as f64,
-        format!("{} MHz", live.cpu.frequency_mhz),
-        chunks[0],
-        frame,
-        app,
+    let rows = Layout::vertical([Constraint::Length(3), Constraint::Min(4)]).split(area);
+    let details = format!(
+        "{}{}",
+        live.frequency_mhz
+            .map(|value| format!("{value} MHz"))
+            .unwrap_or_else(|| "Sensor optional".into()),
+        live.temperature_c
+            .map(|value| format!(" · {value:.0}°C"))
+            .unwrap_or_default()
     );
     widgets::usage_gauge(
-        " MEMORY ",
-        live.memory.percent(),
-        format!(
-            "{} / {}",
-            crate::output::format_bytes(live.memory.used_bytes as f64),
-            crate::output::format_bytes(live.memory.total_bytes as f64)
-        ),
-        chunks[1],
+        " GPU LOAD ",
+        live.usage_percent.unwrap_or(0.0) as f64,
+        details,
+        rows[0],
         frame,
         app,
     );
-    let graphs = Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(chunks[2]);
-    widgets::graph(
-        " CPU HISTORY ",
-        app.cpu_history.iter().copied(),
-        100.0,
-        graphs[0],
+    widgets::line_chart(
+        widgets::LineChartSpec {
+            title: format!(" GPU HISTORY  {} ", widgets::gpu_summary(app)),
+            primary: &app.gpu_history,
+            secondary: None,
+            max: 100.0,
+            middle_label: "50%".into(),
+            upper_label: "100%".into(),
+            color_index: 1,
+        },
+        rows[1],
         frame,
         app,
-        0,
-    );
-    widgets::graph(
-        " NETWORK ",
-        app.network_history.iter().copied(),
-        app.network_history.iter().copied().fold(1.0, f64::max),
-        graphs[1],
-        frame,
-        app,
-        2,
     );
 }
+
+fn performance_panel(frame: &mut Frame, app: &App, area: Rect) {
+    if !app.show_graphs || area.height < 7 {
+        widgets::info_panel(" LIVE METRICS ", widgets::live_rows(app), area, frame, app);
+        return;
+    }
+    let charts =
+        Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).split(area);
+    let cpu = &app.snapshot.live.cpu;
+    widgets::line_chart(
+        widgets::LineChartSpec {
+            title: format!(
+                " CPU + RAM  {:.0}% CPU · {:.0}% RAM · {} MHz{} ",
+                cpu.usage_percent,
+                app.snapshot.live.memory.percent(),
+                cpu.frequency_mhz,
+                cpu.temperature_c
+                    .map(|value| format!(" · {value:.0}°C"))
+                    .unwrap_or_default()
+            ),
+            primary: &app.cpu_history,
+            secondary: Some(&app.memory_history),
+            max: 100.0,
+            middle_label: "50%".into(),
+            upper_label: "100%".into(),
+            color_index: 0,
+        },
+        charts[0],
+        frame,
+        app,
+    );
+    let net = &app.snapshot.live.network;
+    let net_max = app
+        .network_down_history
+        .iter()
+        .chain(app.network_up_history.iter())
+        .copied()
+        .fold(1.0, f64::max);
+    widgets::line_chart(
+        widgets::LineChartSpec {
+            title: format!(
+                " NETWORK  ↓ {} · ↑ {} ",
+                format_rate(net.download_bytes_per_sec),
+                format_rate(net.upload_bytes_per_sec)
+            ),
+            primary: &app.network_down_history,
+            secondary: Some(&app.network_up_history),
+            max: net_max,
+            middle_label: format_rate(net_max / 2.0),
+            upper_label: format_rate(net_max),
+            color_index: 2,
+        },
+        charts[1],
+        frame,
+        app,
+    );
+}
+
 fn fallback(frame: &mut Frame, app: &App) {
     let live = &app.snapshot.live;
     let text = format!(
-        " RIGGLOW\n\n CPU {:.0}% · RAM {:.0}%\n\nTerminal too small — resize for dashboard\n[Q] Quit",
+        " RIGGLOW\n\n CPU {:.0}% · GPU {} · RAM {:.0}%\n\nTerminal too small — resize for dashboard\n[Q] Quit",
         live.cpu.usage_percent,
+        live.gpu
+            .usage_percent
+            .map(|value| format!("{value:.0}%"))
+            .unwrap_or_else(|| "N/A".into()),
         live.memory.percent()
     );
     frame.render_widget(

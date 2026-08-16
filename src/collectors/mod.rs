@@ -25,6 +25,7 @@ pub struct StaticSnapshot {
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct LiveSnapshot {
     pub cpu: cpu::CpuLive,
+    pub gpu: gpu::GpuLive,
     pub memory: memory::MemoryLive,
     pub disk: disks::IoRate,
     pub network: network::NetworkRate,
