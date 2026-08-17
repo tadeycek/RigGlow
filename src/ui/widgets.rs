@@ -7,7 +7,8 @@ use crate::{
 };
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, Gauge, Paragraph, Wrap},
+    symbols,
+    widgets::{Axis, Block, Borders, Chart, Dataset, Gauge, GraphType, Paragraph, Wrap},
 };
 
 pub fn block(title: &str, app: &App) -> Block<'static> {
@@ -229,44 +230,60 @@ pub fn usage_gauge(
     );
 }
 
-pub struct HistorySeries<'a> {
-    pub label: &'a str,
-    pub value: String,
-    pub history: &'a VecDeque<f64>,
-    pub max: f64,
-    pub color: Color,
-}
-
-pub struct HistorySpec<'a> {
+pub struct LineChartSpec<'a> {
     pub title: String,
-    pub series: Vec<HistorySeries<'a>>,
+    pub primary: &'a VecDeque<f64>,
+    pub secondary: Option<&'a VecDeque<f64>>,
+    pub max: f64,
+    pub middle_label: String,
+    pub upper_label: String,
+    pub color_index: usize,
 }
 
-pub fn history_panel(spec: HistorySpec<'_>, area: Rect, frame: &mut Frame, app: &App) {
-    let outer = block(&spec.title, app);
-    let inner = outer.inner(area);
-    frame.render_widget(outer, area);
-    let plot_width = inner.width.saturating_sub(19) as usize;
-    let lines = spec
-        .series
-        .into_iter()
-        .take(inner.height as usize)
-        .map(|series| {
-            let bars = history_bars(series.history, series.max, plot_width);
-            Line::from(vec![
-                Span::styled(
-                    format!(" {:<4}", series.label),
-                    Style::default().fg(app.theme().secondary).bold(),
-                ),
-                Span::styled(
-                    format!("{:>9} ", clip(&series.value, 9)),
-                    Style::default().fg(app.theme().foreground),
-                ),
-                Span::styled(bars, Style::default().fg(series.color)),
-            ])
-        })
-        .collect::<Vec<_>>();
-    frame.render_widget(Paragraph::new(lines).style(surface_style(app)), inner);
+pub fn line_chart(spec: LineChartSpec<'_>, area: Rect, frame: &mut Frame, app: &App) {
+    let primary_data = chart_points(spec.primary);
+    let mut datasets = vec![
+        Dataset::default()
+            .name("primary")
+            // Braille uses an 2x4 sub-cell grid. It keeps the original large
+            // chart canvas while making small changes in live hardware data
+            // read as a detailed line rather than a staircase.
+            .marker(symbols::Marker::Braille)
+            .graph_type(GraphType::Line)
+            .style(Style::default().fg(app.theme().graph[spec.color_index % 3]))
+            .data(&primary_data),
+    ];
+    let secondary_data = spec.secondary.map(chart_points);
+    if let Some(data) = secondary_data.as_ref() {
+        datasets.push(
+            Dataset::default()
+                .name("secondary")
+                .marker(symbols::Marker::Braille)
+                .graph_type(GraphType::Line)
+                .style(Style::default().fg(app.theme().graph[(spec.color_index + 1) % 3]))
+                .data(data),
+        );
+    }
+    let x_max = spec.primary.len().max(2) as f64 - 1.0;
+    frame.render_widget(
+        Chart::new(datasets)
+            .block(block(&spec.title, app))
+            .style(surface_style(app))
+            .x_axis(Axis::default().bounds([0.0, x_max]).labels(vec![
+                Span::styled("past", Style::default().fg(app.theme().muted)),
+                Span::styled("now", Style::default().fg(app.theme().muted)),
+            ]))
+            .y_axis(
+                Axis::default()
+                    .bounds([0.0, spec.max.max(1.0)])
+                    .labels(vec![
+                        Span::styled("0", Style::default().fg(app.theme().muted)),
+                        Span::styled(spec.middle_label, Style::default().fg(app.theme().muted)),
+                        Span::styled(spec.upper_label, Style::default().fg(app.theme().muted)),
+                    ]),
+            ),
+        area,
+    );
 }
 
 pub fn live_rows(app: &App) -> Vec<(String, String)> {
@@ -345,27 +362,12 @@ pub fn battery_summary(app: &App) -> String {
         .map(|value| format!("{value:.0}% {}", battery.status))
         .unwrap_or_else(|| battery.status.clone())
 }
-fn history_bars(history: &VecDeque<f64>, max: f64, width: usize) -> String {
-    const LEVELS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
-    if width == 0 {
-        return String::new();
-    }
-    let values = if history.len() > width {
-        history
-            .iter()
-            .collect::<Vec<_>>()
-            .chunks((history.len() as f64 / width as f64).ceil() as usize)
-            .map(|chunk| chunk.iter().copied().copied().fold(0.0, f64::max))
-            .collect::<Vec<_>>()
-    } else {
-        history.iter().copied().collect::<Vec<_>>()
-    };
-    let mut bars = " ".repeat(width.saturating_sub(values.len()));
-    for value in values.into_iter().take(width) {
-        let index = ((value / max.max(1.0)) * (LEVELS.len() - 1) as f64).round() as usize;
-        bars.push(LEVELS[index.min(LEVELS.len() - 1)]);
-    }
-    bars
+fn chart_points(history: &VecDeque<f64>) -> Vec<(f64, f64)> {
+    history
+        .iter()
+        .enumerate()
+        .map(|(index, value)| (index as f64, *value))
+        .collect()
 }
 fn meter(percent: f64, width: usize) -> String {
     let filled = ((percent.clamp(0.0, 100.0) / 100.0) * width as f64).round() as usize;

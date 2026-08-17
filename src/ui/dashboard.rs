@@ -290,19 +290,15 @@ fn gpu_monitor(frame: &mut Frame, app: &App, area: Rect) {
         frame,
         app,
     );
-    widgets::history_panel(
-        widgets::HistorySpec {
+    widgets::line_chart(
+        widgets::LineChartSpec {
             title: format!(" GPU HISTORY  {} ", widgets::gpu_summary(app)),
-            series: vec![widgets::HistorySeries {
-                label: "LOAD",
-                value: live
-                    .usage_percent
-                    .map(|value| format!("{value:.0}%"))
-                    .unwrap_or_else(|| "N/A".into()),
-                history: &app.gpu_history,
-                max: 100.0,
-                color: app.theme().graph[1],
-            }],
+            primary: &app.gpu_history,
+            secondary: None,
+            max: 100.0,
+            middle_label: "50%".into(),
+            upper_label: "100%".into(),
+            color_index: 1,
         },
         rows[1],
         frame,
@@ -318,31 +314,23 @@ fn performance_panel(frame: &mut Frame, app: &App, area: Rect) {
     let charts =
         Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).split(area);
     let cpu = &app.snapshot.live.cpu;
-    widgets::history_panel(
-        widgets::HistorySpec {
+    widgets::line_chart(
+        widgets::LineChartSpec {
             title: format!(
-                " CPU + RAM  {} MHz{} ",
+                " CPU + RAM  {:.0}% CPU · {:.0}% RAM · {} MHz{} ",
+                cpu.usage_percent,
+                app.snapshot.live.memory.percent(),
                 cpu.frequency_mhz,
                 cpu.temperature_c
                     .map(|value| format!(" · {value:.0}°C"))
                     .unwrap_or_default()
             ),
-            series: vec![
-                widgets::HistorySeries {
-                    label: "CPU",
-                    value: format!("{:.0}%", cpu.usage_percent),
-                    history: &app.cpu_history,
-                    max: 100.0,
-                    color: app.theme().graph[0],
-                },
-                widgets::HistorySeries {
-                    label: "RAM",
-                    value: format!("{:.0}%", app.snapshot.live.memory.percent()),
-                    history: &app.memory_history,
-                    max: 100.0,
-                    color: app.theme().graph[1],
-                },
-            ],
+            primary: &app.cpu_history,
+            secondary: Some(&app.memory_history),
+            max: 100.0,
+            middle_label: "50%".into(),
+            upper_label: "100%".into(),
+            color_index: 0,
         },
         charts[0],
         frame,
@@ -350,25 +338,19 @@ fn performance_panel(frame: &mut Frame, app: &App, area: Rect) {
     );
     let net = &app.snapshot.live.network;
     let net_max = decaying_network_peak(app).max(1.0);
-    widgets::history_panel(
-        widgets::HistorySpec {
-            title: " NETWORK ".into(),
-            series: vec![
-                widgets::HistorySeries {
-                    label: "DOWN",
-                    value: format_rate(net.download_bytes_per_sec),
-                    history: &app.network_down_history,
-                    max: net_max,
-                    color: app.theme().graph[2],
-                },
-                widgets::HistorySeries {
-                    label: "UP",
-                    value: format_rate(net.upload_bytes_per_sec),
-                    history: &app.network_up_history,
-                    max: net_max,
-                    color: app.theme().graph[0],
-                },
-            ],
+    widgets::line_chart(
+        widgets::LineChartSpec {
+            title: format!(
+                " NETWORK  ↓ {} · ↑ {} ",
+                format_rate(net.download_bytes_per_sec),
+                format_rate(net.upload_bytes_per_sec)
+            ),
+            primary: &app.network_down_history,
+            secondary: Some(&app.network_up_history),
+            max: net_max,
+            middle_label: format_rate(net_max / 2.0),
+            upper_label: format_rate(net_max),
+            color_index: 2,
         },
         charts[1],
         frame,
