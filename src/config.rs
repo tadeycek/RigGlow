@@ -55,7 +55,7 @@ pub struct Settings {
 impl Default for ConfigFile {
     fn default() -> Self {
         Self {
-            refresh_rate_ms: 1000,
+            refresh_rate_ms: 2000,
             theme: "terminal".into(),
             icons: true,
             graphs: true,

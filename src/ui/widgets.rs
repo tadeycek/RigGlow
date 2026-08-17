@@ -483,7 +483,10 @@ fn network_dots(value: f64, max_dots: usize) -> usize {
     // The fixed logarithmic mapping keeps all retained samples at the same
     // coordinates while still showing low-rate traffic above the zero line.
     const NETWORK_MAX: f64 = 64.0 * 1024.0 * 1024.0;
-    ((value.max(0.0).ln_1p() / NETWORK_MAX.ln_1p()) * max_dots as f64).round() as usize
+    let dots = ((value.max(0.0).ln_1p() / NETWORK_MAX.ln_1p()) * max_dots as f64).round() as usize;
+    // Keep a one-dot trace at zero so every history column stays connected to
+    // the zero reference instead of disappearing between non-zero towers.
+    dots.clamp(1, max_dots.max(1))
 }
 
 fn dots_from_zero(level: usize, cell_from_zero: usize) -> usize {
@@ -542,7 +545,7 @@ fn clip(value: &str, width: usize) -> String {
 mod tests {
     use std::collections::VecDeque;
 
-    use super::visible_network_samples;
+    use super::{network_dots, visible_network_samples};
 
     #[test]
     fn network_columns_shift_left_and_append_on_the_right() {
@@ -559,5 +562,10 @@ mod tests {
         assert_eq!(first[2].download, second[1].download);
         assert_eq!(first[3].download, second[2].download);
         assert!(second[3].download > second[2].download);
+    }
+
+    #[test]
+    fn zero_network_rate_keeps_a_single_dot() {
+        assert_eq!(network_dots(0.0, 16), 1);
     }
 }

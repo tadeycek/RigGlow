@@ -65,7 +65,7 @@ rigglow --refresh-rate 500
 Optional configuration: `~/.config/rigglow/config.toml`. CLI values take precedence over this file, which takes precedence over built-in defaults.
 
 ```toml
-refresh_rate_ms = 1000
+refresh_rate_ms = 2000
 theme = "synthwave"
 icons = true
 graphs = true
