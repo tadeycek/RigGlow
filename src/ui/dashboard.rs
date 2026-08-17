@@ -11,6 +11,8 @@ use ratatui::{
     widgets::{Paragraph, Wrap},
 };
 
+const NETWORK_GRAPH_MAX: f64 = 64.0 * 1024.0 * 1024.0;
+
 pub fn render(frame: &mut Frame, app: &App) {
     let area = frame.area();
     frame.render_widget(
@@ -299,6 +301,7 @@ fn gpu_monitor(frame: &mut Frame, app: &App, area: Rect) {
             middle_label: "50%".into(),
             upper_label: "100%".into(),
             color_index: 1,
+            scale: widgets::VerticalScale::Linear,
         },
         rows[1],
         frame,
@@ -331,13 +334,13 @@ fn performance_panel(frame: &mut Frame, app: &App, area: Rect) {
             middle_label: "50%".into(),
             upper_label: "100%".into(),
             color_index: 0,
+            scale: widgets::VerticalScale::Linear,
         },
         charts[0],
         frame,
         app,
     );
     let net = &app.snapshot.live.network;
-    let net_max = app.network_graph_max;
     widgets::line_chart(
         widgets::LineChartSpec {
             title: format!(
@@ -347,10 +350,11 @@ fn performance_panel(frame: &mut Frame, app: &App, area: Rect) {
             ),
             primary: &app.network_down_history,
             secondary: Some(&app.network_up_history),
-            max: net_max,
-            middle_label: format_rate(net_max / 2.0),
-            upper_label: format_rate(net_max),
+            max: NETWORK_GRAPH_MAX,
+            middle_label: "8 KiB/s".into(),
+            upper_label: "64 MiB/s".into(),
             color_index: 2,
+            scale: widgets::VerticalScale::Logarithmic,
         },
         charts[1],
         frame,

@@ -238,10 +238,17 @@ pub struct LineChartSpec<'a> {
     pub middle_label: String,
     pub upper_label: String,
     pub color_index: usize,
+    pub scale: VerticalScale,
+}
+
+#[derive(Clone, Copy)]
+pub enum VerticalScale {
+    Linear,
+    Logarithmic,
 }
 
 pub fn line_chart(spec: LineChartSpec<'_>, area: Rect, frame: &mut Frame, app: &App) {
-    let primary_data = chart_points(spec.primary);
+    let primary_data = chart_points(spec.primary, spec.scale);
     let mut datasets = vec![
         Dataset::default()
             .name("primary")
@@ -253,7 +260,9 @@ pub fn line_chart(spec: LineChartSpec<'_>, area: Rect, frame: &mut Frame, app: &
             .style(Style::default().fg(app.theme().graph[spec.color_index % 3]))
             .data(&primary_data),
     ];
-    let secondary_data = spec.secondary.map(chart_points);
+    let secondary_data = spec
+        .secondary
+        .map(|history| chart_points(history, spec.scale));
     if let Some(data) = secondary_data.as_ref() {
         datasets.push(
             Dataset::default()
@@ -275,7 +284,7 @@ pub fn line_chart(spec: LineChartSpec<'_>, area: Rect, frame: &mut Frame, app: &
             ]))
             .y_axis(
                 Axis::default()
-                    .bounds([0.0, spec.max.max(1.0)])
+                    .bounds([0.0, scaled_value(spec.max, spec.scale).max(1.0)])
                     .labels(vec![
                         Span::styled("0", Style::default().fg(app.theme().muted)),
                         Span::styled(spec.middle_label, Style::default().fg(app.theme().muted)),
@@ -362,14 +371,24 @@ pub fn battery_summary(app: &App) -> String {
         .map(|value| format!("{value:.0}% {}", battery.status))
         .unwrap_or_else(|| battery.status.clone())
 }
-fn chart_points(history: &VecDeque<f64>) -> Vec<(f64, f64)> {
+fn chart_points(history: &VecDeque<f64>, scale: VerticalScale) -> Vec<(f64, f64)> {
     let offset = HISTORY_LIMIT.saturating_sub(history.len()) as f64;
     history
         .iter()
         .enumerate()
-        .map(|(index, value)| (offset + index as f64, *value))
+        .map(|(index, value)| (offset + index as f64, scaled_value(*value, scale)))
         .collect()
 }
+
+fn scaled_value(value: f64, scale: VerticalScale) -> f64 {
+    match scale {
+        VerticalScale::Linear => value,
+        // A fixed log axis retains visibility for bytes/sec through MiB/sec
+        // traffic without changing any existing point's coordinates.
+        VerticalScale::Logarithmic => value.max(0.0).ln_1p(),
+    }
+}
+
 fn meter(percent: f64, width: usize) -> String {
     let filled = ((percent.clamp(0.0, 100.0) / 100.0) * width as f64).round() as usize;
     format!(
@@ -395,5 +414,19 @@ fn clip(value: &str, width: usize) -> String {
         format!("{}…", value.chars().take(width - 1).collect::<String>())
     } else {
         value.into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{VerticalScale, scaled_value};
+
+    #[test]
+    fn logarithmic_network_scale_preserves_small_rates() {
+        assert!(scaled_value(1.0, VerticalScale::Logarithmic) > 0.0);
+        assert!(
+            scaled_value(8_192.0, VerticalScale::Logarithmic)
+                < scaled_value(64.0 * 1024.0 * 1024.0, VerticalScale::Logarithmic)
+        );
     }
 }

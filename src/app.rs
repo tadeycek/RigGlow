@@ -18,7 +18,6 @@ pub struct App {
     pub memory_history: VecDeque<f64>,
     pub network_down_history: VecDeque<f64>,
     pub network_up_history: VecDeque<f64>,
-    pub network_graph_max: f64,
     pub show_help: bool,
     pub show_graphs: bool,
     pub show_logo: bool,
@@ -54,7 +53,6 @@ impl App {
             memory_history: VecDeque::new(),
             network_down_history: VecDeque::new(),
             network_up_history: VecDeque::new(),
-            network_graph_max: 1.0,
             theme_index,
             ascii_index: 0,
             cpu: collectors::cpu::LinuxCpuCollector::new(),
@@ -155,8 +153,6 @@ impl App {
             let upload = self.snapshot.live.network.upload_bytes_per_sec;
             push(&mut self.network_down_history, download);
             push(&mut self.network_up_history, upload);
-            self.network_graph_max =
-                stable_network_scale(self.network_graph_max, download.max(upload));
         }
     }
 }
@@ -167,16 +163,9 @@ fn push(history: &mut VecDeque<f64>, sample: f64) {
     history.push_back(sample);
 }
 
-fn stable_network_scale(previous: f64, observed: f64) -> f64 {
-    // Keep the coordinate system fixed for this TUI session. A history graph
-    // must shift existing samples left unchanged and append the new one on the
-    // right; shrinking its y-axis would redraw every old point at a new height.
-    previous.max(observed).max(1.0)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{push, stable_network_scale};
+    use super::push;
     use std::collections::VecDeque;
 
     #[test]
@@ -188,13 +177,5 @@ mod tests {
         push(&mut history, 58.0);
         assert_eq!(history.len(), 2);
         assert_eq!(history.back(), Some(&58.0));
-    }
-
-    #[test]
-    fn network_scale_only_expands_for_a_larger_real_spike() {
-        let peak = stable_network_scale(1.0, 2_000_000.0);
-        assert_eq!(peak, 2_000_000.0);
-        assert_eq!(stable_network_scale(peak, 100.0), peak);
-        assert_eq!(stable_network_scale(peak, 3_000_000.0), 3_000_000.0);
     }
 }
