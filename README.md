@@ -2,20 +2,7 @@
 
 RigGlow is a Linux-first live hardware fetcher: Fastfetch-style machine information with a compact, colorful Ratatui dashboard. It deliberately stays out of process-management territory—there is no process table, only the hardware picture and a few lightweight live graphs.
 
-```text
- RIGGLOW  LIVE HARDWARE FETCHER             ◈ emerald
-╭─ IDENTITY ───────────────╮ ╭─ SYSTEM ────────────────────────╮
-│       /\      /\         │ │ OS       EndeavourOS            │
-│      /  \____/  \        │ │ Host     ASUS Zenbook S16       │
-│     /            \       │ │ Kernel   Linux 6.x              │
-╰──────────────────────────╯ ╰─────────────────────────────────╯
-                             ╭─ LIVE ──────────────────────────╮
-                             │ CPU     ██████░░░░  38%          │
-                             │ MEMORY  █████░░░░░  18.4 GiB     │
-                             │ CPU HISTORY       ▂▄▆█▆▃▅▇       │
-                             ╰─────────────────────────────────╯
- [T] Theme  [A] ASCII  [G] Graphs  [S] Snapshot  [Q] Quit
-```
+<img width="2880" height="1620" alt="Screenshot_20260817_122757" src="https://github.com/user-attachments/assets/f663a49c-23f6-494e-bb37-fa2698b16488" />
 
 ## Features
 
