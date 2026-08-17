@@ -140,8 +140,33 @@ impl App {
     }
 }
 fn push(history: &mut VecDeque<f64>, sample: f64) {
+    // A live monitor has no past samples on its very first frame. Seed that
+    // frame with the first real value so the full chart begins as a continuous
+    // baseline, then replace samples from oldest to newest on each refresh.
+    if history.is_empty() {
+        history.extend(std::iter::repeat_n(sample, HISTORY_LIMIT));
+        return;
+    }
     if history.len() >= HISTORY_LIMIT {
         history.pop_front();
     }
     history.push_back(sample);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{HISTORY_LIMIT, push};
+    use std::collections::VecDeque;
+
+    #[test]
+    fn initial_history_is_a_continuous_baseline() {
+        let mut history = VecDeque::new();
+        push(&mut history, 42.0);
+        assert_eq!(history.len(), HISTORY_LIMIT);
+        assert!(history.iter().all(|value| *value == 42.0));
+
+        push(&mut history, 58.0);
+        assert_eq!(history.len(), HISTORY_LIMIT);
+        assert_eq!(history.back(), Some(&58.0));
+    }
 }
