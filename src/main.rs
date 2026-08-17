@@ -75,6 +75,7 @@ fn main() -> Result<()> {
 }
 
 fn run_tui(app: &mut App) -> Result<bool> {
+    app.prime_history();
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;

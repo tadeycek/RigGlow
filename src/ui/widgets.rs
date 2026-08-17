@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 
 use crate::{
-    app::App,
+    app::{App, HISTORY_LIMIT},
     output::{format_bytes, format_rate},
     theme,
 };
@@ -264,7 +264,7 @@ pub fn line_chart(spec: LineChartSpec<'_>, area: Rect, frame: &mut Frame, app: &
                 .data(data),
         );
     }
-    let x_max = spec.primary.len().max(2) as f64 - 1.0;
+    let x_max = HISTORY_LIMIT.saturating_sub(1) as f64;
     frame.render_widget(
         Chart::new(datasets)
             .block(block(&spec.title, app))
@@ -363,10 +363,11 @@ pub fn battery_summary(app: &App) -> String {
         .unwrap_or_else(|| battery.status.clone())
 }
 fn chart_points(history: &VecDeque<f64>) -> Vec<(f64, f64)> {
+    let offset = HISTORY_LIMIT.saturating_sub(history.len()) as f64;
     history
         .iter()
         .enumerate()
-        .map(|(index, value)| (index as f64, *value))
+        .map(|(index, value)| (offset + index as f64, *value))
         .collect()
 }
 fn meter(percent: f64, width: usize) -> String {

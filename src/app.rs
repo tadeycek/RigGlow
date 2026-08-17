@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::{collections::VecDeque, thread, time::Duration};
 
 use crate::{
     collectors::{self, LiveCollector, StaticCollector},
@@ -7,6 +7,8 @@ use crate::{
 };
 
 pub const HISTORY_LIMIT: usize = 180;
+const STARTUP_SAMPLES: usize = 6;
+const STARTUP_SAMPLE_INTERVAL: Duration = Duration::from_millis(40);
 
 pub struct App {
     pub settings: Settings,
@@ -63,6 +65,15 @@ impl App {
         app.refresh_static();
         app.refresh_live();
         app
+    }
+
+    pub fn prime_history(&mut self) {
+        // Build a small, genuine initial trail. It avoids a single-point graph
+        // without inventing a flat history that visibly shifts on every tick.
+        for _ in 1..STARTUP_SAMPLES {
+            thread::sleep(STARTUP_SAMPLE_INTERVAL);
+            self.refresh_live();
+        }
     }
     pub fn theme(&self) -> &'static Theme {
         &builtin::all()[self.theme_index]
@@ -140,13 +151,6 @@ impl App {
     }
 }
 fn push(history: &mut VecDeque<f64>, sample: f64) {
-    // A live monitor has no past samples on its very first frame. Seed that
-    // frame with the first real value so the full chart begins as a continuous
-    // baseline, then replace samples from oldest to newest on each refresh.
-    if history.is_empty() {
-        history.extend(std::iter::repeat_n(sample, HISTORY_LIMIT));
-        return;
-    }
     if history.len() >= HISTORY_LIMIT {
         history.pop_front();
     }
@@ -155,18 +159,17 @@ fn push(history: &mut VecDeque<f64>, sample: f64) {
 
 #[cfg(test)]
 mod tests {
-    use super::{HISTORY_LIMIT, push};
+    use super::push;
     use std::collections::VecDeque;
 
     #[test]
-    fn initial_history_is_a_continuous_baseline() {
+    fn history_only_contains_real_samples() {
         let mut history = VecDeque::new();
         push(&mut history, 42.0);
-        assert_eq!(history.len(), HISTORY_LIMIT);
-        assert!(history.iter().all(|value| *value == 42.0));
+        assert_eq!(history, VecDeque::from([42.0]));
 
         push(&mut history, 58.0);
-        assert_eq!(history.len(), HISTORY_LIMIT);
+        assert_eq!(history.len(), 2);
         assert_eq!(history.back(), Some(&58.0));
     }
 }
