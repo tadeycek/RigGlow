@@ -238,17 +238,10 @@ pub struct LineChartSpec<'a> {
     pub middle_label: String,
     pub upper_label: String,
     pub color_index: usize,
-    pub scale: VerticalScale,
-}
-
-#[derive(Clone, Copy)]
-pub enum VerticalScale {
-    Linear,
-    Logarithmic,
 }
 
 pub fn line_chart(spec: LineChartSpec<'_>, area: Rect, frame: &mut Frame, app: &App) {
-    let primary_data = chart_points(spec.primary, spec.scale);
+    let primary_data = chart_points(spec.primary);
     let mut datasets = vec![
         Dataset::default()
             .name("primary")
@@ -260,9 +253,7 @@ pub fn line_chart(spec: LineChartSpec<'_>, area: Rect, frame: &mut Frame, app: &
             .style(Style::default().fg(app.theme().graph[spec.color_index % 3]))
             .data(&primary_data),
     ];
-    let secondary_data = spec
-        .secondary
-        .map(|history| chart_points(history, spec.scale));
+    let secondary_data = spec.secondary.map(chart_points);
     if let Some(data) = secondary_data.as_ref() {
         datasets.push(
             Dataset::default()
@@ -284,7 +275,7 @@ pub fn line_chart(spec: LineChartSpec<'_>, area: Rect, frame: &mut Frame, app: &
             ]))
             .y_axis(
                 Axis::default()
-                    .bounds([0.0, scaled_value(spec.max, spec.scale).max(1.0)])
+                    .bounds([0.0, spec.max.max(1.0)])
                     .labels(vec![
                         Span::styled("0", Style::default().fg(app.theme().muted)),
                         Span::styled(spec.middle_label, Style::default().fg(app.theme().muted)),
@@ -293,6 +284,87 @@ pub fn line_chart(spec: LineChartSpec<'_>, area: Rect, frame: &mut Frame, app: &
             ),
         area,
     );
+}
+
+pub fn network_history(
+    title: String,
+    download: &VecDeque<f64>,
+    upload: &VecDeque<f64>,
+    area: Rect,
+    frame: &mut Frame,
+    app: &App,
+) {
+    let outer = block(&title, app);
+    let inner = outer.inner(area);
+    frame.render_widget(outer, area);
+    if inner.width < 12 || inner.height < 4 {
+        return;
+    }
+
+    let columns = Layout::horizontal([Constraint::Length(10), Constraint::Min(1)]).split(inner);
+    let graph_rows = columns[1].height.saturating_sub(1) as usize;
+    let width = columns[1].width as usize;
+    let zero_row = graph_rows / 2;
+    let samples = visible_network_samples(download, upload, width);
+    let label_lines = (0..graph_rows)
+        .map(|row| {
+            let label = if row == 0 {
+                "UP 64 MiB"
+            } else if row == zero_row {
+                "0"
+            } else if row + 1 == graph_rows {
+                "DN 64 MiB"
+            } else {
+                ""
+            };
+            Line::styled(label, Style::default().fg(app.theme().muted))
+        })
+        .chain(std::iter::once(Line::default()))
+        .collect::<Vec<_>>();
+    frame.render_widget(
+        Paragraph::new(label_lines).style(surface_style(app)),
+        columns[0],
+    );
+
+    let mut lines = Vec::with_capacity(graph_rows + 1);
+    for row in 0..graph_rows {
+        let spans = samples
+            .iter()
+            .map(|sample| {
+                if row < zero_row {
+                    let dots = dots_from_zero(
+                        network_dots(sample.upload, zero_row * 4),
+                        zero_row - row - 1,
+                    );
+                    Span::styled(
+                        braille_from_bottom(dots).to_string(),
+                        Style::default().fg(app.theme().graph[0]),
+                    )
+                } else if row == zero_row {
+                    Span::styled("⠒", Style::default().fg(app.theme().muted))
+                } else {
+                    let dots = dots_from_zero(
+                        network_dots(sample.download, (graph_rows - zero_row - 1) * 4),
+                        row - zero_row - 1,
+                    );
+                    Span::styled(
+                        braille_from_top(dots).to_string(),
+                        Style::default().fg(app.theme().graph[1]),
+                    )
+                }
+            })
+            .collect::<Vec<_>>();
+        lines.push(Line::from(spans));
+    }
+    lines.push(Line::from(vec![
+        Span::styled("past", Style::default().fg(app.theme().muted)),
+        Span::styled(
+            " ".repeat(width.saturating_sub(7)),
+            Style::default().fg(app.theme().muted),
+        ),
+        Span::styled("now", Style::default().fg(app.theme().muted)),
+    ]));
+    frame.render_widget(Paragraph::new(lines).style(surface_style(app)), columns[1]);
 }
 
 pub fn live_rows(app: &App) -> Vec<(String, String)> {
@@ -371,21 +443,70 @@ pub fn battery_summary(app: &App) -> String {
         .map(|value| format!("{value:.0}% {}", battery.status))
         .unwrap_or_else(|| battery.status.clone())
 }
-fn chart_points(history: &VecDeque<f64>, scale: VerticalScale) -> Vec<(f64, f64)> {
+fn chart_points(history: &VecDeque<f64>) -> Vec<(f64, f64)> {
     let offset = HISTORY_LIMIT.saturating_sub(history.len()) as f64;
     history
         .iter()
         .enumerate()
-        .map(|(index, value)| (offset + index as f64, scaled_value(*value, scale)))
+        .map(|(index, value)| (offset + index as f64, *value))
         .collect()
 }
 
-fn scaled_value(value: f64, scale: VerticalScale) -> f64 {
-    match scale {
-        VerticalScale::Linear => value,
-        // A fixed log axis retains visibility for bytes/sec through MiB/sec
-        // traffic without changing any existing point's coordinates.
-        VerticalScale::Logarithmic => value.max(0.0).ln_1p(),
+#[derive(Clone, Copy, Default)]
+struct NetworkSample {
+    download: f64,
+    upload: f64,
+}
+
+fn visible_network_samples(
+    download: &VecDeque<f64>,
+    upload: &VecDeque<f64>,
+    width: usize,
+) -> Vec<NetworkSample> {
+    let count = download.len().min(upload.len()).min(width);
+    let padding = width.saturating_sub(count);
+    let mut columns = vec![NetworkSample::default(); padding];
+    for (down, up) in download
+        .iter()
+        .skip(download.len().saturating_sub(count))
+        .zip(upload.iter().skip(upload.len().saturating_sub(count)))
+    {
+        columns.push(NetworkSample {
+            download: *down,
+            upload: *up,
+        });
+    }
+    columns
+}
+
+fn network_dots(value: f64, max_dots: usize) -> usize {
+    // The fixed logarithmic mapping keeps all retained samples at the same
+    // coordinates while still showing low-rate traffic above the zero line.
+    const NETWORK_MAX: f64 = 64.0 * 1024.0 * 1024.0;
+    ((value.max(0.0).ln_1p() / NETWORK_MAX.ln_1p()) * max_dots as f64).round() as usize
+}
+
+fn dots_from_zero(level: usize, cell_from_zero: usize) -> usize {
+    level.saturating_sub(cell_from_zero * 4).clamp(0, 4)
+}
+
+fn braille_from_bottom(dots: usize) -> char {
+    match dots {
+        0 => ' ',
+        1 => '⡀',
+        2 => '⡄',
+        3 => '⡆',
+        _ => '⡇',
+    }
+}
+
+fn braille_from_top(dots: usize) -> char {
+    match dots {
+        0 => ' ',
+        1 => '⠁',
+        2 => '⠃',
+        3 => '⠇',
+        _ => '⡇',
     }
 }
 
@@ -419,14 +540,24 @@ fn clip(value: &str, width: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{VerticalScale, scaled_value};
+    use std::collections::VecDeque;
+
+    use super::visible_network_samples;
 
     #[test]
-    fn logarithmic_network_scale_preserves_small_rates() {
-        assert!(scaled_value(1.0, VerticalScale::Logarithmic) > 0.0);
-        assert!(
-            scaled_value(8_192.0, VerticalScale::Logarithmic)
-                < scaled_value(64.0 * 1024.0 * 1024.0, VerticalScale::Logarithmic)
+    fn network_columns_shift_left_and_append_on_the_right() {
+        let first = visible_network_samples(
+            &VecDeque::from([100.0, 1_000.0]),
+            &VecDeque::from([0.0, 0.0]),
+            4,
         );
+        let second = visible_network_samples(
+            &VecDeque::from([100.0, 1_000.0, 10_000.0]),
+            &VecDeque::from([0.0, 0.0, 0.0]),
+            4,
+        );
+        assert_eq!(first[2].download, second[1].download);
+        assert_eq!(first[3].download, second[2].download);
+        assert!(second[3].download > second[2].download);
     }
 }
