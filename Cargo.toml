@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2024"
 description = "A colorful live Linux hardware fetcher"
 license = "MIT"
+repository = "https://github.com/tadeycek/RigGlow"
+homepage = "https://github.com/tadeycek/RigGlow"
+readme = "README.md"
 
 [dependencies]
 anyhow = "1.0"
