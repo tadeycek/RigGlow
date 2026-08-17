@@ -1,10 +1,11 @@
 use crate::{
     ascii,
-    ascii::builtin::distro_name,
+    ascii::builtin::{CANVAS_WIDTH, distro_name},
     collectors::{Snapshot, system::uptime_human},
     output::{format_bytes, format_rate},
-    theme::{Theme, color_hex},
+    theme::Theme,
 };
+use ratatui::style::Color;
 
 pub fn render(snapshot: &Snapshot, art_source: &str, theme: &Theme, icons: bool) -> String {
     let s = &snapshot.static_info;
@@ -50,7 +51,13 @@ pub fn render(snapshot: &Snapshot, art_source: &str, theme: &Theme, icons: bool)
             label("󰋊", "Disk"),
             s.disks
                 .first()
-                .map(|d| format!("{} {}", d.model, format_bytes(d.capacity_bytes as f64)))
+                .map(|d| {
+                    format!(
+                        "{} {}",
+                        d.model.replace("Sandisk", "SanDisk"),
+                        format_bytes(d.capacity_bytes as f64)
+                    )
+                })
                 .unwrap_or_else(|| "Unknown".into()),
         ),
         (
@@ -88,42 +95,84 @@ pub fn render(snapshot: &Snapshot, art_source: &str, theme: &Theme, icons: bool)
         ),
     ];
     let art = ascii::load(art_source, &distro_name(), theme).unwrap_or_default();
-    let art_plain: Vec<_> = art
+    let art_colored = art
         .into_iter()
         .map(|l| {
-            l.spans
-                .into_iter()
-                .map(|p| p.content.into_owned())
-                .collect::<String>()
+            let mut width = 0;
+            let mut text = String::new();
+            for span in l.spans {
+                width += span.content.chars().count();
+                text.push_str(&ansi_foreground(span.style.fg.unwrap_or(theme.primary)));
+                text.push_str(&span.content);
+            }
+            text.push_str("\x1b[0m");
+            (text, width)
         })
-        .collect();
-    let width = 28usize;
-    let mut output = format!("\x1b[38;2;{}mRigGlow\x1b[0m\n", rgb(theme.primary));
-    for index in 0..rows.len().max(art_plain.len()) {
-        let left = art_plain.get(index).map(String::as_str).unwrap_or("");
+        .collect::<Vec<_>>();
+    let art_width = art_colored
+        .iter()
+        .map(|(_, width)| *width)
+        .max()
+        .unwrap_or(CANVAS_WIDTH)
+        .max(CANVAS_WIDTH);
+    let mut output = format!(
+        "{}RigGlow\x1b[0m  {}hardware snapshot\x1b[0m\n",
+        ansi_foreground(theme.primary),
+        ansi_foreground(theme.muted),
+    );
+    for index in 0..rows.len().max(art_colored.len()) {
+        let (left, left_width) = art_colored
+            .get(index)
+            .map(|(text, width)| (text.as_str(), *width))
+            .unwrap_or(("", 0));
         let right = rows
             .get(index)
-            .map(|(k, v)| format!("\x1b[38;2;{}m{:<10}\x1b[0m {}", rgb(theme.secondary), k, v))
+            .map(|(k, v)| {
+                format!(
+                    "{}{k:<12}\x1b[0m {}{v}\x1b[0m",
+                    ansi_foreground(theme.secondary),
+                    ansi_foreground(theme.foreground),
+                )
+            })
             .unwrap_or_default();
-        output.push_str(&format!(
-            "\x1b[38;2;{}m{left:<width$}\x1b[0m {right}\n",
-            rgb(theme.primary),
-            width = width
-        ));
+        output.push_str(left);
+        output.push_str(&" ".repeat(art_width.saturating_sub(left_width) + 4));
+        output.push_str(&right);
+        output.push('\n');
     }
     output
 }
-fn rgb(theme_color: ratatui::style::Color) -> String {
-    color_hex(theme_color)
-        .trim_start_matches('#')
-        .to_string()
-        .as_bytes()
-        .chunks(2)
-        .map(|c| {
-            u8::from_str_radix(std::str::from_utf8(c).unwrap_or("00"), 16)
-                .unwrap_or(0)
-                .to_string()
-        })
-        .collect::<Vec<_>>()
-        .join(";")
+
+fn ansi_foreground(color: Color) -> String {
+    match color {
+        Color::Reset => "\x1b[39m".into(),
+        Color::Indexed(index) => format!("\x1b[38;5;{index}m"),
+        other => {
+            let (red, green, blue) = rgb(other);
+            format!("\x1b[38;2;{red};{green};{blue}m")
+        }
+    }
+}
+
+fn rgb(color: Color) -> (u8, u8, u8) {
+    match color {
+        Color::Rgb(red, green, blue) => (red, green, blue),
+        Color::Black => (0, 0, 0),
+        Color::Red => (255, 85, 85),
+        Color::Green => (80, 250, 123),
+        Color::Yellow => (241, 250, 140),
+        Color::Blue => (139, 233, 253),
+        Color::Magenta => (189, 147, 249),
+        Color::Cyan => (139, 233, 253),
+        Color::Gray => (205, 205, 205),
+        Color::DarkGray => (112, 112, 112),
+        Color::LightRed => (255, 121, 121),
+        Color::LightGreen => (120, 255, 150),
+        Color::LightYellow => (255, 244, 140),
+        Color::LightBlue => (160, 210, 255),
+        Color::LightMagenta => (220, 170, 255),
+        Color::LightCyan => (140, 240, 255),
+        Color::White => (255, 255, 255),
+        Color::Reset | Color::Indexed(_) => unreachable!("handled by ansi_foreground"),
+    }
 }

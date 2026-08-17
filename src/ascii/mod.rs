@@ -20,7 +20,7 @@ pub fn load(source: &str, distro: &str, theme: &Theme) -> Result<Vec<Line<'stati
     } else {
         builtin::named("rigglow").unwrap_or_default()
     };
-    let lines = parse(&raw)
+    let lines = parse(&builtin::normalize(&raw))
         .into_iter()
         .map(|parts| {
             let spans = parts

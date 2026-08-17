@@ -3,7 +3,7 @@
 RigGlow is a Linux-first live hardware fetcher: Fastfetch-style machine information with a compact, colorful Ratatui dashboard. It deliberately stays out of process-management territory—there is no process table, only the hardware picture and a few lightweight live graphs.
 
 ```text
- RIGGLOW  LIVE HARDWARE FETCHER             ◈ synthwave
+ RIGGLOW  LIVE HARDWARE FETCHER             ◈ emerald
 ╭─ IDENTITY ───────────────╮ ╭─ SYSTEM ────────────────────────╮
 │       /\      /\         │ │ OS       EndeavourOS            │
 │      /  \____/  \        │ │ Host     ASUS Zenbook S16       │
@@ -22,10 +22,12 @@ RigGlow is a Linux-first live hardware fetcher: Fastfetch-style machine informat
 - Linux `/proc` and `/sys` collectors with no root requirement.
 - Live CPU, GPU, memory, disk-I/O and network rates with labelled CPU/RAM, GPU, and download/upload history charts.
 - OS, host, kernel, uptime, desktop, terminal, DMI, CPU, GPU, disk, battery, display and network metadata when available.
-- Nine built-in themes: Catppuccin Mocha, Dracula, Nord, Gruvbox, Tokyo Night, Synthwave, Matrix, Arch Blue, and Monochrome.
+- Seventeen built-in themes: Terminal (transparent/inherited), Emerald, Catppuccin Mocha, Dracula, Nord, Gruvbox, Tokyo Night, Synthwave, Matrix, Arch Blue, Monochrome, Rose Pine, One Dark, Kanagawa, Everforest, Ayu Dark, and Solarized Dark. Named themes use opaque dashboard surfaces.
 - Fastfetch-style OS logos for 20 popular Linux distributions—Arch, EndeavourOS, Ubuntu, Fedora, Debian, Mint, Manjaro, openSUSE, Pop!_OS, Kali, NixOS, Gentoo, RHEL, Rocky, AlmaLinux, Void, Solus, elementary, Zorin, and MX—plus retro, cat, and RigGlow artwork.
 - Responsive Ratatui layout with a safe minimal view for tiny terminals.
 - Static, compact SSH, and JSON output modes.
+
+Top Activity is deliberately a three-process overview, not a process manager. Its CPU percentage is per logical thread: `100%` means one fully occupied logical CPU, so a multithreaded process can exceed `100%`.
 
 ## Build
 
@@ -54,6 +56,7 @@ rigglow --refresh-rate 500
 | `t` | Cycle themes |
 | `a` | Cycle ASCII art |
 | `g` | Toggle graphs |
+| `p` | Toggle Top Activity sorting between CPU and RAM |
 | `l` | Toggle logo |
 | `c` | Toggle compact layout |
 | `s` | Leave the alternate screen and print a snapshot |
@@ -66,7 +69,7 @@ Optional configuration: `~/.config/rigglow/config.toml`. CLI values take precede
 
 ```toml
 refresh_rate_ms = 2000
-theme = "synthwave"
+theme = "emerald"
 icons = true
 graphs = true
 animation = true
@@ -87,12 +90,23 @@ disks = true
 network = true
 battery = true
 display = true
+
+[memory]
+# Show swap even when unused; memory bars turn yellow/red at these levels.
+show_swap = false
+warning_percent = 80
+critical_percent = 90
+
+[storage]
+# Warn when free capacity drops below these percentages.
+warning_free_percent = 15
+critical_free_percent = 5
 ```
 
 Custom ASCII art supports `${primary}`, `${secondary}`, `${accent}`, `${foreground}`, `${muted}`, and `${reset}`. Unknown tokens are preserved as text.
 
 ## Current Linux limitations
 
-This MVP reports generic Intel/AMD/NVIDIA GPU information from sysfs; live GPU utilization, VRAM, and temperatures are intentionally optional. Display refresh rate is often unavailable under Wayland, and disk capacity is derived from Linux block devices. No shell command runs on the live refresh path.
+GPU activity, VRAM, power and temperatures depend on the driver and are optional. RigGlow asks KDE's `kscreen-doctor` for Wayland refresh rates when available, with `/sys` as a fallback. Disk capacity distinguishes physical-drive capacity from the mounted filesystem capacity. Network latency is a lightweight periodic ping of the active default gateway; it is optional and never requires root.
 
 The collector traits isolate Linux-specific behavior. Windows and macOS collectors are planned, but not yet implemented.

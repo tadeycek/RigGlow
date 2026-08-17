@@ -9,6 +9,7 @@ pub struct DiskInfo {
     pub model: String,
     pub kind: String,
     pub capacity_bytes: u64,
+    pub temperature_c: Option<f32>,
 }
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct FilesystemInfo {
@@ -17,6 +18,7 @@ pub struct FilesystemInfo {
     pub total_bytes: u64,
     pub used_bytes: u64,
     pub available_bytes: u64,
+    pub filesystem_type: String,
 }
 #[derive(Debug, Clone, Copy, Serialize, Default)]
 pub struct IoRate {
@@ -67,6 +69,7 @@ impl StaticCollector<Vec<DiskInfo>> for LinuxDiskCollector {
                     "SSD/NVMe".into()
                 },
                 capacity_bytes: sectors.saturating_mul(512),
+                temperature_c: disk_temperature(&root),
             });
         }
         Ok(disks)
@@ -91,20 +94,24 @@ impl LinuxDiskCollector {
         if !output.status.success() {
             return Vec::new();
         }
+        let types = filesystem_types();
         String::from_utf8(output.stdout)
             .ok()
             .into_iter()
             .flat_map(|text| {
                 text.lines()
                     .skip(1)
-                    .filter_map(parse_filesystem)
+                    .filter_map(|line| parse_filesystem(line, &types))
                     .collect::<Vec<_>>()
             })
             .collect()
     }
 }
 
-fn parse_filesystem(line: &str) -> Option<FilesystemInfo> {
+fn parse_filesystem(
+    line: &str,
+    types: &std::collections::HashMap<String, String>,
+) -> Option<FilesystemInfo> {
     let fields: Vec<_> = line.split_whitespace().collect();
     if fields.len() < 5 {
         return None;
@@ -115,7 +122,43 @@ fn parse_filesystem(line: &str) -> Option<FilesystemInfo> {
         used_bytes: fields[2].parse().ok()?,
         available_bytes: fields[3].parse().ok()?,
         mount_point: fields[4..].join(" "),
+        filesystem_type: types
+            .get(&fields[4..].join(" "))
+            .cloned()
+            .unwrap_or_else(|| "Unknown".into()),
     })
+}
+
+fn filesystem_types() -> std::collections::HashMap<String, String> {
+    fs::read_to_string("/proc/mounts")
+        .ok()
+        .into_iter()
+        .flat_map(|text| {
+            text.lines()
+                .filter_map(|line| {
+                    let fields: Vec<_> = line.split_whitespace().collect();
+                    (fields.len() >= 3)
+                        .then(|| (fields[1].replace("\\040", " "), fields[2].to_owned()))
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+fn disk_temperature(root: &std::path::Path) -> Option<f32> {
+    let hwmon = root.join("device/hwmon");
+    for entry in fs::read_dir(hwmon).ok()?.flatten() {
+        for index in 1..=8 {
+            let input = entry.path().join(format!("temp{index}_input"));
+            if let Ok(raw) = fs::read_to_string(input)
+                && let Ok(value) = raw.trim().parse::<f32>()
+                && (1_000.0..150_000.0).contains(&value)
+            {
+                return Some(value / 1000.0);
+            }
+        }
+    }
+    None
 }
 impl LiveCollector<IoRate> for LinuxDiskCollector {
     fn refresh_live(&mut self) -> anyhow::Result<IoRate> {

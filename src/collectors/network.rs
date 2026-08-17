@@ -1,4 +1,10 @@
-use std::{collections::HashMap, fs, net::UdpSocket, time::Instant};
+use std::{
+    collections::HashMap,
+    fs,
+    net::UdpSocket,
+    process::Command,
+    time::{Duration, Instant},
+};
 
 use serde::Serialize;
 
@@ -13,6 +19,7 @@ pub struct NetworkInfo {
 pub struct NetworkRate {
     pub download_bytes_per_sec: f64,
     pub upload_bytes_per_sec: f64,
+    pub latency_ms: Option<f64>,
 }
 #[derive(Debug, Clone, Copy, Default)]
 struct Counters {
@@ -22,6 +29,9 @@ struct Counters {
 pub struct LinuxNetworkCollector {
     previous: Option<(Counters, Instant)>,
     active: String,
+    gateway: Option<String>,
+    last_latency_at: Option<Instant>,
+    last_latency_ms: Option<f64>,
 }
 impl LinuxNetworkCollector {
     pub fn new() -> Self {
@@ -29,6 +39,9 @@ impl LinuxNetworkCollector {
         Self {
             previous: None,
             active,
+            gateway: default_gateway(),
+            last_latency_at: None,
+            last_latency_ms: None,
         }
     }
     pub fn static_info(&self) -> NetworkInfo {
@@ -52,7 +65,17 @@ impl LiveCollector<NetworkRate> for LinuxNetworkCollector {
             .map(|(old, then)| rate(old, current, now.saturating_duration_since(then)))
             .unwrap_or_default();
         self.previous = Some((current, now));
-        Ok(rate)
+        if self
+            .last_latency_at
+            .is_none_or(|then| now.saturating_duration_since(then) >= Duration::from_secs(5))
+        {
+            self.last_latency_ms = self.gateway.as_deref().and_then(ping_latency);
+            self.last_latency_at = Some(now);
+        }
+        Ok(NetworkRate {
+            latency_ms: self.last_latency_ms,
+            ..rate
+        })
     }
 }
 fn counters() -> anyhow::Result<HashMap<String, Counters>> {
@@ -81,6 +104,35 @@ fn active_interface() -> Option<String> {
         (p.len() > 2 && p[1] == "00000000").then(|| p[0].to_owned())
     })
 }
+
+fn default_gateway() -> Option<String> {
+    let routes = fs::read_to_string("/proc/net/route").ok()?;
+    routes.lines().skip(1).find_map(|line| {
+        let fields: Vec<_> = line.split_whitespace().collect();
+        if fields.len() < 3 || fields[1] != "00000000" {
+            return None;
+        }
+        let raw = u32::from_str_radix(fields[2], 16).ok()?;
+        Some(std::net::Ipv4Addr::from(raw.to_le_bytes()).to_string())
+    })
+}
+
+fn ping_latency(host: &str) -> Option<f64> {
+    let output = Command::new("ping")
+        .args(["-n", "-c", "1", "-W", "1", host])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .split("time=")
+        .nth(1)?
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()
+}
 fn local_ip() -> Option<String> {
     let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
     socket.connect("192.0.2.1:80").ok()?;
@@ -94,5 +146,17 @@ fn rate(old: Counters, new: Counters, elapsed: std::time::Duration) -> NetworkRa
     NetworkRate {
         download_bytes_per_sec: new.received.saturating_sub(old.received) as f64 / secs,
         upload_bytes_per_sec: new.transmitted.saturating_sub(old.transmitted) as f64 / secs,
+        latency_ms: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::default_gateway;
+
+    #[test]
+    fn default_gateway_is_optional_on_host() {
+        // Parsing `/proc/net/route` must never be a hard dependency.
+        let _ = default_gateway();
     }
 }

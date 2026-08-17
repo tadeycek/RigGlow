@@ -21,6 +21,7 @@ pub struct GpuLive {
     pub frequency_mhz: Option<u64>,
     pub vram_used_bytes: Option<u64>,
     pub vram_total_bytes: Option<u64>,
+    pub power_watts: Option<f32>,
 }
 
 pub struct LinuxGpuCollector;
@@ -66,12 +67,17 @@ impl LiveCollector<GpuLive> for LinuxGpuLiveCollector {
         let frequency_mhz = hwmon_number(device, "freq1_input")
             .map(|v| v / 1_000_000)
             .filter(|v| *v > 0);
+        let power_watts = hwmon_number(device, "power1_average")
+            .or_else(|| hwmon_number(device, "power1_input"))
+            .map(|value| value as f32 / 1_000_000.0)
+            .filter(|value| *value > 0.0);
         Ok(GpuLive {
             usage_percent,
             temperature_c,
             frequency_mhz,
             vram_used_bytes: read_number(device.join("mem_info_vram_used")),
             vram_total_bytes: read_number(device.join("mem_info_vram_total")),
+            power_watts,
         })
     }
 }
@@ -88,7 +94,8 @@ fn collect_gpu() -> GpuInfo {
         if vendor != "Unknown" {
             let device_id = fs::read_to_string(device.join("device")).unwrap_or_default();
             let mut gpu = GpuInfo {
-                model: format!("{vendor} Graphics ({})", device_id.trim()),
+                model: pci_gpu_name(&device, &vendor)
+                    .unwrap_or_else(|| format!("{vendor} Graphics ({})", device_id.trim())),
                 vendor,
                 temperature_c: None,
                 utilization_percent: None,
@@ -102,6 +109,35 @@ fn collect_gpu() -> GpuInfo {
         }
     }
     GpuInfo::default()
+}
+
+fn pci_gpu_name(device: &Path, vendor: &str) -> Option<String> {
+    let canonical = device.canonicalize().ok()?;
+    let bdf = canonical.file_name()?.to_string_lossy();
+    let output = Command::new("lspci").args(["-s", &bdf]).output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let line = String::from_utf8(output.stdout).ok()?;
+    let description = line
+        .split_once(": ")
+        .map(|(_, description)| description.trim().to_owned())
+        .filter(|description| !description.is_empty())?;
+    Some(normalize_gpu_name(vendor, &description))
+}
+
+fn normalize_gpu_name(vendor: &str, description: &str) -> String {
+    if vendor == "AMD"
+        && let Some(model) = description
+            .split("Radeon ")
+            .nth(1)
+            .and_then(|tail| tail.split(['/', ']', '(']).next())
+            .map(str::trim)
+            .filter(|model| !model.is_empty())
+    {
+        return format!("AMD Radeon {model}");
+    }
+    description.to_owned()
 }
 
 fn gpu_device() -> Option<PathBuf> {
@@ -178,5 +214,22 @@ fn nvidia_live() -> Option<GpuLive> {
             .get(4)
             .and_then(|v| v.parse::<u64>().ok())
             .map(|v| v * 1024 * 1024),
+        power_watts: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_gpu_name;
+
+    #[test]
+    fn normalizes_amd_pci_descriptions() {
+        assert_eq!(
+            normalize_gpu_name(
+                "AMD",
+                "Advanced Micro Devices, Inc. [AMD/ATI] Strix [Radeon 880M / 890M] (rev e3)"
+            ),
+            "AMD Radeon 880M"
+        );
+    }
 }

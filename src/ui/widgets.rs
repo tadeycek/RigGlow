@@ -1,25 +1,32 @@
 use std::collections::VecDeque;
 
 use crate::{
-    app::{App, HISTORY_LIMIT},
+    app::App,
     output::{format_bytes, format_rate},
     theme,
 };
 use ratatui::{
     prelude::*,
-    symbols,
-    widgets::{Axis, Block, Borders, Chart, Dataset, Gauge, GraphType, Paragraph, Wrap},
+    widgets::{Block, Borders, Gauge, Paragraph, Wrap},
 };
+use std::collections::HashMap;
 
 pub fn block(title: &str, app: &App) -> Block<'static> {
+    block_line(
+        Line::styled(
+            title.to_owned(),
+            Style::default().fg(app.theme().primary).bold(),
+        ),
+        app,
+    )
+}
+
+pub fn block_line(title: Line<'static>, app: &App) -> Block<'static> {
     Block::default()
         .borders(Borders::ALL)
         .style(surface_style(app))
         .border_style(Style::default().fg(app.theme().border))
-        .title(Line::styled(
-            title.to_owned(),
-            Style::default().fg(app.theme().primary).bold(),
-        ))
+        .title(title)
 }
 
 pub fn surface_style(app: &App) -> Style {
@@ -93,19 +100,26 @@ pub fn core_grid(title: &str, cores: &[f32], area: Rect, frame: &mut Frame, app:
     let inner = outer.inner(area);
     frame.render_widget(outer, area);
 
-    // Two independent paragraphs deliberately reserve half the card for each
-    // column. This avoids the visual drift that padding-based columns caused.
-    let columns =
-        Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).split(inner);
-    for (column, offset) in columns.iter().zip([0usize, 1]) {
-        let meter_width = column.width.saturating_sub(9).clamp(3, 12) as usize;
-        let lines = cores
+    let group_size = cores.len().div_ceil(4);
+    let columns = Layout::horizontal([
+        Constraint::Percentage(25),
+        Constraint::Percentage(25),
+        Constraint::Percentage(25),
+        Constraint::Percentage(25),
+    ])
+    .split(inner);
+    for (column, index) in columns.iter().zip(0..4) {
+        let offset = index * group_size;
+        let end = (offset + group_size).min(cores.len());
+        let group = cores.get(offset..end).unwrap_or_default();
+        // Derive one common meter width so every percentage column begins at
+        // the same offset, even when terminal cell rounding differs by a cell.
+        let meter_width = (inner.width / 4).saturating_sub(10).clamp(3, 18) as usize;
+        let lines = group
             .iter()
-            .skip(offset)
-            .step_by(2)
             .enumerate()
             .map(|(row, usage)| {
-                let index = row * 2 + offset + 1;
+                let index = row + offset + 1;
                 Line::from(vec![
                     Span::styled(
                         format!("{index:02} "),
@@ -128,6 +142,7 @@ pub fn core_grid(title: &str, cores: &[f32], area: Rect, frame: &mut Frame, app:
 
 pub fn filesystem_card(
     filesystem: Option<&crate::collectors::disks::FilesystemInfo>,
+    disk: Option<&crate::collectors::disks::DiskInfo>,
     read_rate: f64,
     write_rate: f64,
     area: Rect,
@@ -149,17 +164,40 @@ pub fn filesystem_card(
     } else {
         fs.used_bytes as f64 / fs.total_bytes as f64 * 100.0
     };
-    let meter_width = area.width.saturating_sub(16).clamp(8, 32) as usize;
+    let meter_width = area.width.saturating_sub(16).clamp(8, 42) as usize;
+    let free_percent = 100.0 - percent;
+    let device = match disk {
+        Some(disk) => format!(
+            "{} · {} · {}{}",
+            clip(&fs.source, 22),
+            disk_kind_label(&disk.kind),
+            clip(&normalize_disk_model(&disk.model), 42),
+            disk.temperature_c
+                .map(|temperature| format!(" · {temperature:.0}°C"))
+                .unwrap_or_default(),
+        ),
+        None => format!("{} · filesystem", clip(&fs.source, 24)),
+    };
     let lines = vec![
         Line::from(vec![
-            Span::styled("  ", Style::default()),
+            Span::styled("  DEVICE ", Style::default().fg(app.theme().muted)),
+            Span::styled(device, Style::default().fg(app.theme().secondary)),
+            Span::styled("  FS ", Style::default().fg(app.theme().muted)),
             Span::styled(
-                format!("{} ", clip(&fs.mount_point, 10)),
-                Style::default().fg(app.theme().secondary),
+                fs.filesystem_type.clone(),
+                Style::default().fg(app.theme().foreground),
             ),
+            Span::styled("   MOUNT ", Style::default().fg(app.theme().muted)),
+            Span::styled(
+                clip(&fs.mount_point, 14),
+                Style::default().fg(app.theme().foreground),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("  FS USAGE ", Style::default().fg(app.theme().muted)),
             Span::styled(
                 meter(percent, meter_width),
-                Style::default().fg(usage_color(percent, app)),
+                Style::default().fg(storage_usage_color(free_percent, app)),
             ),
             Span::styled(
                 format!(" {percent:.0}%"),
@@ -176,21 +214,106 @@ pub fn filesystem_card(
                 ),
                 Style::default().fg(app.theme().foreground),
             ),
-            Span::styled("   READ ", Style::default().fg(app.theme().muted)),
+            Span::styled("   FREE ", Style::default().fg(app.theme().muted)),
             Span::styled(
-                format_rate(read_rate),
-                Style::default().fg(app.theme().graph[0]),
+                format!(
+                    "{} ({free_percent:.0}%)",
+                    format_bytes(fs.available_bytes as f64)
+                ),
+                Style::default().fg(storage_usage_color(free_percent, app)),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("  READ ", Style::default().fg(app.theme().muted)),
+            Span::styled(
+                rate_or_dash(read_rate),
+                rate_style(read_rate, app.theme().graph[0], app),
             ),
             Span::styled("   WRITE ", Style::default().fg(app.theme().muted)),
             Span::styled(
-                format_rate(write_rate),
-                Style::default().fg(app.theme().graph[1]),
+                rate_or_dash(write_rate),
+                rate_style(write_rate, app.theme().graph[1], app),
             ),
         ]),
     ];
     frame.render_widget(
         Paragraph::new(lines)
             .block(block(" DISK / I-O ", app))
+            .style(surface_style(app))
+            .wrap(Wrap { trim: true }),
+        area,
+    );
+}
+
+pub fn top_activity(app: &App, area: Rect, frame: &mut Frame) {
+    let inner_width = area.width.saturating_sub(2) as usize;
+    let cpu_width = 6;
+    let ram_width = 9;
+    let column_gap = 2;
+    let name_width = inner_width.saturating_sub(cpu_width + ram_width + (column_gap * 2) + 1);
+    let name_counts = app.snapshot.live.top_processes.iter().fold(
+        HashMap::<&str, usize>::new(),
+        |mut counts, process| {
+            *counts.entry(process.name.as_str()).or_default() += 1;
+            counts
+        },
+    );
+    let mut lines = vec![Line::from(vec![
+        Span::styled(
+            format!(" {:<name_width$}", "PROCESS"),
+            Style::default().fg(app.theme().muted).bold(),
+        ),
+        Span::styled(
+            format!("{:column_gap$}{:>cpu_width$}", "", "CPU"),
+            Style::default().fg(app.theme().muted).bold(),
+        ),
+        Span::styled(
+            format!("{:column_gap$}{:>ram_width$}", "", "RAM"),
+            Style::default().fg(app.theme().muted).bold(),
+        ),
+    ])];
+    lines.extend(
+        app.snapshot
+            .live
+            .top_processes
+            .iter()
+            .map(|process| {
+                let process_name =
+                    if name_counts.get(process.name.as_str()).copied().unwrap_or(0) > 1 {
+                        format!("{} #{}", process.name, process.pid)
+                    } else {
+                        process.name.clone()
+                    };
+                Line::from(vec![
+                    Span::styled(
+                        format!(" {:<name_width$}", clip(&process_name, name_width)),
+                        Style::default().fg(app.theme().foreground),
+                    ),
+                    Span::styled(
+                        format!("{:column_gap$}{:>cpu_width$.0}%", "", process.cpu_percent),
+                        Style::default().fg(app.theme().graph[0]),
+                    ),
+                    Span::styled(
+                        format!(
+                            "{:column_gap$}{:>ram_width$}",
+                            "",
+                            format_bytes(process.memory_bytes as f64)
+                        ),
+                        Style::default().fg(app.theme().graph[1]),
+                    ),
+                ])
+            })
+            .collect::<Vec<_>>(),
+    );
+    while lines.len() < 4 {
+        lines.push(Line::styled(" —", Style::default().fg(app.theme().muted)));
+    }
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(block(
+                &format!(" TOP ACTIVITY · {} ↓ ", app.activity_sort.label()),
+                app,
+            ))
             .style(surface_style(app))
             .wrap(Wrap { trim: true }),
         area,
@@ -223,122 +346,87 @@ pub fn usage_gauge(
             )
             .ratio(value / 100.0)
             .label(Span::styled(
-                format!("{detail}  {value:.0}%"),
+                detail,
                 Style::default().fg(app.theme().foreground),
             )),
         area,
     );
 }
 
-pub struct LineChartSpec<'a> {
-    pub title: String,
-    pub primary: &'a VecDeque<f64>,
-    pub secondary: Option<&'a VecDeque<f64>>,
+#[derive(Clone, Copy)]
+pub enum HistoryScale {
+    Linear,
+}
+
+pub struct PairedHistorySpec<'a> {
+    pub title: Line<'static>,
+    pub upper: &'a VecDeque<f64>,
+    pub lower: &'a VecDeque<f64>,
     pub max: f64,
-    pub middle_label: String,
+    pub scale: HistoryScale,
     pub upper_label: String,
-    pub color_index: usize,
+    pub lower_label: String,
+    pub upper_color: Color,
+    pub lower_color: Color,
 }
 
-pub fn line_chart(spec: LineChartSpec<'_>, area: Rect, frame: &mut Frame, app: &App) {
-    let primary_data = chart_points(spec.primary);
-    let mut datasets = vec![
-        Dataset::default()
-            .name("primary")
-            // Braille uses an 2x4 sub-cell grid. It keeps the original large
-            // chart canvas while making small changes in live hardware data
-            // read as a detailed line rather than a staircase.
-            .marker(symbols::Marker::Braille)
-            .graph_type(GraphType::Line)
-            .style(Style::default().fg(app.theme().graph[spec.color_index % 3]))
-            .data(&primary_data),
-    ];
-    let secondary_data = spec.secondary.map(chart_points);
-    if let Some(data) = secondary_data.as_ref() {
-        datasets.push(
-            Dataset::default()
-                .name("secondary")
-                .marker(symbols::Marker::Braille)
-                .graph_type(GraphType::Line)
-                .style(Style::default().fg(app.theme().graph[(spec.color_index + 1) % 3]))
-                .data(data),
-        );
-    }
-    let x_max = HISTORY_LIMIT.saturating_sub(1) as f64;
-    frame.render_widget(
-        Chart::new(datasets)
-            .block(block(&spec.title, app))
-            .style(surface_style(app))
-            .x_axis(Axis::default().bounds([0.0, x_max]).labels(vec![
-                Span::styled("past", Style::default().fg(app.theme().muted)),
-                Span::styled("now", Style::default().fg(app.theme().muted)),
-            ]))
-            .y_axis(
-                Axis::default()
-                    .bounds([0.0, spec.max.max(1.0)])
-                    .labels(vec![
-                        Span::styled("0", Style::default().fg(app.theme().muted)),
-                        Span::styled(spec.middle_label, Style::default().fg(app.theme().muted)),
-                        Span::styled(spec.upper_label, Style::default().fg(app.theme().muted)),
-                    ]),
-            ),
-        area,
-    );
-}
-
-pub fn network_history(
-    title: String,
-    download: &VecDeque<f64>,
-    upload: &VecDeque<f64>,
-    area: Rect,
-    frame: &mut Frame,
-    app: &App,
-) {
-    let outer = block(&title, app);
+/// Renders btop-like history: every stored sample owns exactly one terminal
+/// column and is never rescaled or redrawn when later samples arrive.
+pub fn paired_history(spec: PairedHistorySpec<'_>, area: Rect, frame: &mut Frame, app: &App) {
+    let outer = block_line(spec.title, app);
     let inner = outer.inner(area);
     frame.render_widget(outer, area);
     if inner.width < 12 || inner.height < 4 {
         return;
     }
 
-    let columns = Layout::horizontal([Constraint::Length(10), Constraint::Min(1)]).split(inner);
-    let graph_rows = columns[1].height.saturating_sub(1) as usize;
+    let axis_width = spec
+        .upper_label
+        .len()
+        .max(spec.lower_label.len())
+        .clamp(10, 18) as u16;
+    let columns =
+        Layout::horizontal([Constraint::Length(axis_width), Constraint::Min(1)]).split(inner);
+    let graph_rows = columns[1].height as usize;
     let width = columns[1].width as usize;
     let zero_row = graph_rows / 2;
-    let samples = visible_network_samples(download, upload, width);
+    let samples = visible_paired_samples(spec.upper, spec.lower, width);
     let label_lines = (0..graph_rows)
         .map(|row| {
             let label = if row == 0 {
-                "UP 64 MiB"
+                spec.upper_label.as_str()
             } else if row == zero_row {
                 "0"
             } else if row + 1 == graph_rows {
-                "DN 64 MiB"
+                spec.lower_label.as_str()
             } else {
                 ""
             };
             Line::styled(label, Style::default().fg(app.theme().muted))
         })
-        .chain(std::iter::once(Line::default()))
         .collect::<Vec<_>>();
     frame.render_widget(
         Paragraph::new(label_lines).style(surface_style(app)),
         columns[0],
     );
 
-    let mut lines = Vec::with_capacity(graph_rows + 1);
+    let mut lines = Vec::with_capacity(graph_rows);
     for row in 0..graph_rows {
         let spans = samples
             .iter()
             .map(|sample| {
                 if row < zero_row {
                     let dots = dots_from_zero(
-                        network_dots(sample.upload, zero_row * 4),
+                        history_dots(sample.upper, spec.max, zero_row * 4, spec.scale),
                         zero_row - row - 1,
                     );
                     Span::styled(
                         dense_braille_from_bottom(dots).to_string(),
-                        Style::default().fg(app.theme().graph[0]),
+                        Style::default().fg(if sample.upper <= f64::EPSILON {
+                            app.theme().muted
+                        } else {
+                            spec.upper_color
+                        }),
                     )
                 } else if row == zero_row {
                     // Two filled Braille columns: dotted texture, but no blank
@@ -346,26 +434,92 @@ pub fn network_history(
                     Span::styled("⠶", Style::default().fg(app.theme().muted))
                 } else {
                     let dots = dots_from_zero(
-                        network_dots(sample.download, (graph_rows - zero_row - 1) * 4),
+                        history_dots(
+                            sample.lower,
+                            spec.max,
+                            (graph_rows - zero_row - 1) * 4,
+                            spec.scale,
+                        ),
                         row - zero_row - 1,
                     );
                     Span::styled(
                         dense_braille_from_top(dots).to_string(),
-                        Style::default().fg(app.theme().graph[1]),
+                        Style::default().fg(if sample.lower <= f64::EPSILON {
+                            app.theme().muted
+                        } else {
+                            spec.lower_color
+                        }),
                     )
                 }
             })
             .collect::<Vec<_>>();
         lines.push(Line::from(spans));
     }
-    lines.push(Line::from(vec![
-        Span::styled("past", Style::default().fg(app.theme().muted)),
-        Span::styled(
-            " ".repeat(width.saturating_sub(7)),
-            Style::default().fg(app.theme().muted),
-        ),
-        Span::styled("now", Style::default().fg(app.theme().muted)),
-    ]));
+    frame.render_widget(Paragraph::new(lines).style(surface_style(app)), columns[1]);
+}
+
+pub struct SingleHistorySpec<'a> {
+    pub title: String,
+    pub history: &'a VecDeque<f64>,
+    pub max: f64,
+    pub upper_label: String,
+    pub color: Color,
+}
+
+/// A single upward dense-dot history. A zero sample still has one dot, so the
+/// history is a continuous bundled trace rather than a sequence of gaps.
+pub fn single_history(spec: SingleHistorySpec<'_>, area: Rect, frame: &mut Frame, app: &App) {
+    let outer = block(&spec.title, app);
+    let inner = outer.inner(area);
+    frame.render_widget(outer, area);
+    if inner.width < 12 || inner.height < 4 {
+        return;
+    }
+
+    let axis_width = spec.upper_label.len().clamp(7, 16) as u16;
+    let columns =
+        Layout::horizontal([Constraint::Length(axis_width), Constraint::Min(1)]).split(inner);
+    let graph_rows = columns[1].height as usize;
+    let width = columns[1].width as usize;
+    let samples = visible_single_samples(spec.history, width);
+    let label_lines = (0..graph_rows)
+        .map(|row| {
+            let label = if row == 0 {
+                spec.upper_label.as_str()
+            } else if row + 1 == graph_rows {
+                "0"
+            } else {
+                ""
+            };
+            Line::styled(label, Style::default().fg(app.theme().muted))
+        })
+        .collect::<Vec<_>>();
+    frame.render_widget(
+        Paragraph::new(label_lines).style(surface_style(app)),
+        columns[0],
+    );
+
+    let mut lines = Vec::with_capacity(graph_rows);
+    for row in 0..graph_rows {
+        let spans = samples
+            .iter()
+            .map(|value| {
+                let dots = dots_from_zero(
+                    history_dots(*value, spec.max, graph_rows * 4, HistoryScale::Linear),
+                    graph_rows - row - 1,
+                );
+                Span::styled(
+                    dense_braille_from_bottom(dots).to_string(),
+                    Style::default().fg(if *value <= f64::EPSILON {
+                        app.theme().muted
+                    } else {
+                        spec.color
+                    }),
+                )
+            })
+            .collect::<Vec<_>>();
+        lines.push(Line::from(spans));
+    }
     frame.render_widget(Paragraph::new(lines).style(surface_style(app)), columns[1]);
 }
 
@@ -415,11 +569,10 @@ pub fn live_rows(app: &App) -> Vec<(String, String)> {
 
 pub fn gpu_summary(app: &App) -> String {
     let gpu = &app.snapshot.live.gpu;
-    let mut parts = vec![
-        gpu.usage_percent
-            .map(|value| format!("{value:.0}%"))
-            .unwrap_or_else(|| "No usage sensor".into()),
-    ];
+    let mut parts = gpu
+        .usage_percent
+        .map(|value| vec![format!("{value:.0}%")])
+        .unwrap_or_default();
     if let Some(value) = gpu.temperature_c {
         parts.push(format!("{value:.0}°C"));
     }
@@ -427,65 +580,136 @@ pub fn gpu_summary(app: &App) -> String {
         parts.push(format!("{value} MHz"));
     }
     if let (Some(used), Some(total)) = (gpu.vram_used_bytes, gpu.vram_total_bytes) {
-        parts.push(format!(
-            "VRAM {} / {}",
-            format_bytes(used as f64),
-            format_bytes(total as f64)
-        ));
+        parts.push(format_vram_pair(used, total));
     } else if let Some(used) = gpu.vram_used_bytes {
         parts.push(format!("VRAM {}", format_bytes(used as f64)));
     }
+    if let Some(power) = gpu.power_watts {
+        parts.push(format!("{power:.0} W"));
+    }
     parts.join(" · ")
+}
+
+fn format_vram_pair(used: u64, total: u64) -> String {
+    const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
+    if total as f64 >= GIB {
+        format!("{:.1}/{:.1} GiB", used as f64 / GIB, total as f64 / GIB)
+    } else {
+        format!(
+            "{}/{}",
+            format_bytes(used as f64),
+            format_bytes(total as f64)
+        )
+    }
 }
 
 pub fn battery_summary(app: &App) -> String {
     let battery = &app.snapshot.live.battery;
     battery
         .percentage
-        .map(|value| format!("{value:.0}% {}", battery.status))
+        .map(|value| {
+            let mut parts = vec![format!("{value:.0}%"), battery.status.clone()];
+            if let Some(seconds) = battery.time_remaining_seconds {
+                parts.push(format_duration(seconds));
+            }
+            if let Some(health) = battery.health_percent {
+                parts.push(format!("{health:.0}% health"));
+            }
+            if let Some(power) = battery.power_watts {
+                parts.push(format!("{power:.0} W"));
+            }
+            parts.join(" · ")
+        })
         .unwrap_or_else(|| battery.status.clone())
 }
-fn chart_points(history: &VecDeque<f64>) -> Vec<(f64, f64)> {
-    let offset = HISTORY_LIMIT.saturating_sub(history.len()) as f64;
-    history
-        .iter()
-        .enumerate()
-        .map(|(index, value)| (offset + index as f64, *value))
-        .collect()
+
+fn format_duration(seconds: u64) -> String {
+    format!("{}h {:02}m", seconds / 3600, (seconds % 3600) / 60)
 }
 
+fn rate_style(rate: f64, color: Color, app: &App) -> Style {
+    Style::default().fg(if rate <= f64::EPSILON {
+        app.theme().muted
+    } else {
+        color
+    })
+}
+
+fn rate_or_dash(rate: f64) -> String {
+    if rate <= f64::EPSILON {
+        "—".into()
+    } else {
+        format_rate(rate)
+    }
+}
+
+fn storage_usage_color(free_percent: f64, app: &App) -> Color {
+    if free_percent <= app.settings.storage.critical_free_percent {
+        app.theme().critical
+    } else if free_percent <= app.settings.storage.warning_free_percent {
+        app.theme().warning
+    } else {
+        app.theme().good
+    }
+}
+
+fn disk_kind_label(kind: &str) -> &str {
+    if kind.eq_ignore_ascii_case("SSD/NVMe") {
+        "NVMe"
+    } else {
+        kind
+    }
+}
+
+fn normalize_disk_model(model: &str) -> String {
+    model.replace("Sandisk", "SanDisk")
+}
 #[derive(Clone, Copy, Default)]
-struct NetworkSample {
-    download: f64,
-    upload: f64,
+struct PairedSample {
+    upper: f64,
+    lower: f64,
 }
 
-fn visible_network_samples(
-    download: &VecDeque<f64>,
-    upload: &VecDeque<f64>,
+fn visible_paired_samples(
+    upper: &VecDeque<f64>,
+    lower: &VecDeque<f64>,
     width: usize,
-) -> Vec<NetworkSample> {
-    let count = download.len().min(upload.len()).min(width);
+) -> Vec<PairedSample> {
+    let count = upper.len().min(lower.len()).min(width);
     let padding = width.saturating_sub(count);
-    let mut columns = vec![NetworkSample::default(); padding];
-    for (down, up) in download
+    let mut columns = vec![PairedSample::default(); padding];
+    for (upper, lower) in upper
         .iter()
-        .skip(download.len().saturating_sub(count))
-        .zip(upload.iter().skip(upload.len().saturating_sub(count)))
+        .skip(upper.len().saturating_sub(count))
+        .zip(lower.iter().skip(lower.len().saturating_sub(count)))
     {
-        columns.push(NetworkSample {
-            download: *down,
-            upload: *up,
+        columns.push(PairedSample {
+            upper: *upper,
+            lower: *lower,
         });
     }
     columns
 }
 
-fn network_dots(value: f64, max_dots: usize) -> usize {
-    // The fixed logarithmic mapping keeps all retained samples at the same
-    // coordinates while still showing low-rate traffic above the zero line.
-    const NETWORK_MAX: f64 = 64.0 * 1024.0 * 1024.0;
-    let dots = ((value.max(0.0).ln_1p() / NETWORK_MAX.ln_1p()) * max_dots as f64).round() as usize;
+fn visible_single_samples(history: &VecDeque<f64>, width: usize) -> Vec<f64> {
+    let count = history.len().min(width);
+    let mut columns = vec![0.0; width.saturating_sub(count)];
+    columns.extend(
+        history
+            .iter()
+            .skip(history.len().saturating_sub(count))
+            .copied(),
+    );
+    columns
+}
+
+fn history_dots(value: f64, max: f64, max_dots: usize, scale: HistoryScale) -> usize {
+    let value = value.max(0.0);
+    let max = max.max(1.0);
+    let ratio = match scale {
+        HistoryScale::Linear => value / max,
+    };
+    let dots = (ratio * max_dots as f64).round() as usize;
     // Keep a one-dot trace at zero so every history column stays connected to
     // the zero reference instead of disappearing between non-zero towers.
     dots.clamp(1, max_dots.max(1))
@@ -523,7 +747,7 @@ fn meter(percent: f64, width: usize) -> String {
         "░".repeat(width.saturating_sub(filled))
     )
 }
-fn usage_color(value: f64, app: &App) -> Color {
+pub fn usage_color(value: f64, app: &App) -> Color {
     if value > 90.0 {
         app.theme().critical
     } else if value > 75.0 {
@@ -547,27 +771,30 @@ fn clip(value: &str, width: usize) -> String {
 mod tests {
     use std::collections::VecDeque;
 
-    use super::{network_dots, visible_network_samples};
+    use super::{HistoryScale, history_dots, visible_paired_samples};
 
     #[test]
     fn network_columns_shift_left_and_append_on_the_right() {
-        let first = visible_network_samples(
+        let first = visible_paired_samples(
             &VecDeque::from([100.0, 1_000.0]),
             &VecDeque::from([0.0, 0.0]),
             4,
         );
-        let second = visible_network_samples(
+        let second = visible_paired_samples(
             &VecDeque::from([100.0, 1_000.0, 10_000.0]),
             &VecDeque::from([0.0, 0.0, 0.0]),
             4,
         );
-        assert_eq!(first[2].download, second[1].download);
-        assert_eq!(first[3].download, second[2].download);
-        assert!(second[3].download > second[2].download);
+        assert_eq!(first[2].upper, second[1].upper);
+        assert_eq!(first[3].upper, second[2].upper);
+        assert!(second[3].upper > second[2].upper);
     }
 
     #[test]
     fn zero_network_rate_keeps_a_single_dot() {
-        assert_eq!(network_dots(0.0, 16), 1);
+        assert_eq!(
+            history_dots(0.0, 64.0 * 1024.0 * 1024.0, 16, HistoryScale::Linear),
+            1
+        );
     }
 }

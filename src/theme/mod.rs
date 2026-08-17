@@ -18,15 +18,6 @@ pub struct Theme {
     pub graph: [Color; 3],
 }
 
-pub fn color_hex(color: Color) -> String {
-    match color {
-        Color::Rgb(r, g, b) => format!("#{r:02x}{g:02x}{b:02x}"),
-        Color::Black => "#000000".into(),
-        Color::White => "#ffffff".into(),
-        _ => "#aaaaaa".into(),
-    }
-}
-
 /// A lifted, non-default surface ensures terminal emulators such as Kitty keep
 /// RigGlow panels opaque even when their default terminal background is transparent.
 pub fn surface(color: Color) -> Color {

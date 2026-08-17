@@ -60,6 +60,9 @@ fn main() -> Result<()> {
         return Ok(());
     }
     let snapshot = run_tui(&mut app)?;
+    if app.theme_changed() {
+        config::persist_theme(&app.settings.theme)?;
+    }
     if snapshot {
         print!(
             "{}",
@@ -116,6 +119,7 @@ fn event_loop(
                 KeyCode::Char('c') => app.compact = !app.compact,
                 KeyCode::Char('s') => return Ok(true),
                 KeyCode::Char('r') => app.refresh_static(),
+                KeyCode::Char('p') => app.toggle_activity_sort(),
                 KeyCode::Char('?') => app.show_help = !app.show_help,
                 _ => {}
             }

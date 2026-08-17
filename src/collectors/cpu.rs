@@ -11,6 +11,7 @@ pub struct CpuLive {
     pub per_core_percent: Vec<f32>,
     pub frequency_mhz: u64,
     pub temperature_c: Option<f32>,
+    pub package_power_watts: Option<f32>,
 }
 
 pub struct LinuxCpuCollector {
@@ -46,15 +47,25 @@ impl LiveCollector<CpuLive> for LinuxCpuCollector {
         Ok(CpuLive {
             usage_percent: self.system.global_cpu_usage(),
             per_core_percent,
-            frequency_mhz: self
-                .system
-                .cpus()
-                .first()
-                .map(|cpu| cpu.frequency())
-                .unwrap_or(0),
+            // `sysinfo` reports the current frequency for every logical CPU.
+            // An average is much clearer than showing whichever core happened
+            // to be first in the list.
+            frequency_mhz: average_frequency_mhz(self.system.cpus()),
             temperature_c: cpu_temperature(),
+            package_power_watts: cpu_package_power(),
         })
     }
+}
+
+fn average_frequency_mhz(cpus: &[sysinfo::Cpu]) -> u64 {
+    let (sum, count) = cpus.iter().fold((0u64, 0u64), |(sum, count), cpu| {
+        let frequency = cpu.frequency();
+        (
+            sum.saturating_add(frequency),
+            count + u64::from(frequency > 0),
+        )
+    });
+    sum.checked_div(count).unwrap_or(0)
 }
 
 #[derive(Clone, Copy)]
@@ -113,5 +124,50 @@ fn cpu_temperature() -> Option<f32> {
             candidates.push(value / 1000.0);
         }
     }
+    for entry in fs::read_dir("/sys/class/hwmon").ok()?.flatten() {
+        let root = entry.path();
+        let is_cpu_sensor = fs::read_to_string(root.join("name"))
+            .ok()
+            .is_some_and(|name| matches!(name.trim(), "k10temp" | "coretemp" | "zenpower"));
+        if !is_cpu_sensor {
+            continue;
+        }
+        for index in 1..=8 {
+            let path = root.join(format!("temp{index}_input"));
+            if let Ok(raw) = fs::read_to_string(path)
+                && let Ok(value) = raw.trim().parse::<f32>()
+                && (1_000.0..150_000.0).contains(&value)
+            {
+                candidates.push(value / 1000.0);
+            }
+        }
+    }
     candidates.into_iter().reduce(f32::max)
+}
+
+fn cpu_package_power() -> Option<f32> {
+    for entry in fs::read_dir("/sys/class/hwmon").ok()?.flatten() {
+        let root = entry.path();
+        let is_cpu_sensor = fs::read_to_string(root.join("name"))
+            .ok()
+            .is_some_and(|name| matches!(name.trim(), "k10temp" | "coretemp" | "zenpower"));
+        if !is_cpu_sensor {
+            continue;
+        }
+        for index in 1..=4 {
+            let label = fs::read_to_string(root.join(format!("power{index}_label")))
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            if !label.is_empty() && !label.contains("package") && !label.contains("ppt") {
+                continue;
+            }
+            if let Ok(raw) = fs::read_to_string(root.join(format!("power{index}_average")))
+                && let Ok(microwatts) = raw.trim().parse::<f32>()
+                && microwatts > 0.0
+            {
+                return Some(microwatts / 1_000_000.0);
+            }
+        }
+    }
+    None
 }

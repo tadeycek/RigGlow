@@ -7,6 +7,7 @@ pub mod display;
 pub mod gpu;
 pub mod memory;
 pub mod network;
+pub mod processes;
 pub mod system;
 
 use serde::Serialize;
@@ -31,6 +32,7 @@ pub struct LiveSnapshot {
     pub disk: disks::IoRate,
     pub network: network::NetworkRate,
     pub battery: battery::BatteryInfo,
+    pub top_processes: Vec<processes::TopProcess>,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]

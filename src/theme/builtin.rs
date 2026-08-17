@@ -3,7 +3,7 @@ use ratatui::style::Color;
 const fn rgb(r: u8, g: u8, b: u8) -> Color {
     Color::Rgb(r, g, b)
 }
-const THEMES: [Theme; 10] = [
+const THEMES: [Theme; 17] = [
     Theme {
         name: "terminal",
         background: Color::Reset,
@@ -17,6 +17,20 @@ const THEMES: [Theme; 10] = [
         critical: Color::Red,
         border: Color::DarkGray,
         graph: [Color::Cyan, Color::Magenta, Color::Green],
+    },
+    Theme {
+        name: "emerald",
+        background: rgb(18, 18, 18),
+        foreground: rgb(242, 242, 242),
+        muted: rgb(166, 166, 166),
+        primary: rgb(29, 215, 96),
+        secondary: rgb(99, 242, 147),
+        accent: rgb(167, 255, 193),
+        good: rgb(29, 215, 96),
+        warning: rgb(255, 205, 71),
+        critical: rgb(255, 92, 92),
+        border: rgb(62, 62, 62),
+        graph: [rgb(29, 215, 96), rgb(99, 242, 147), rgb(167, 255, 193)],
     },
     Theme {
         name: "catppuccin-mocha",
@@ -144,6 +158,90 @@ const THEMES: [Theme; 10] = [
         border: rgb(92, 92, 92),
         graph: [rgb(255, 255, 255), rgb(200, 200, 200), rgb(160, 160, 160)],
     },
+    Theme {
+        name: "rose-pine",
+        background: rgb(25, 23, 36),
+        foreground: rgb(224, 222, 244),
+        muted: rgb(110, 106, 134),
+        primary: rgb(196, 167, 231),
+        secondary: rgb(235, 188, 186),
+        accent: rgb(156, 207, 216),
+        good: rgb(156, 207, 216),
+        warning: rgb(246, 193, 119),
+        critical: rgb(235, 111, 146),
+        border: rgb(64, 61, 82),
+        graph: [rgb(156, 207, 216), rgb(196, 167, 231), rgb(235, 188, 186)],
+    },
+    Theme {
+        name: "one-dark",
+        background: rgb(40, 44, 52),
+        foreground: rgb(171, 178, 191),
+        muted: rgb(92, 99, 112),
+        primary: rgb(97, 175, 239),
+        secondary: rgb(198, 120, 221),
+        accent: rgb(86, 182, 194),
+        good: rgb(152, 195, 121),
+        warning: rgb(229, 192, 123),
+        critical: rgb(224, 108, 117),
+        border: rgb(75, 82, 96),
+        graph: [rgb(86, 182, 194), rgb(198, 120, 221), rgb(152, 195, 121)],
+    },
+    Theme {
+        name: "kanagawa",
+        background: rgb(31, 31, 40),
+        foreground: rgb(220, 215, 186),
+        muted: rgb(114, 113, 110),
+        primary: rgb(126, 156, 216),
+        secondary: rgb(149, 127, 184),
+        accent: rgb(126, 191, 188),
+        good: rgb(152, 187, 108),
+        warning: rgb(230, 195, 132),
+        critical: rgb(195, 64, 67),
+        border: rgb(84, 84, 109),
+        graph: [rgb(126, 191, 188), rgb(149, 127, 184), rgb(126, 156, 216)],
+    },
+    Theme {
+        name: "everforest",
+        background: rgb(45, 53, 48),
+        foreground: rgb(211, 198, 170),
+        muted: rgb(133, 146, 137),
+        primary: rgb(127, 187, 179),
+        secondary: rgb(214, 153, 182),
+        accent: rgb(167, 192, 128),
+        good: rgb(167, 192, 128),
+        warning: rgb(219, 188, 127),
+        critical: rgb(230, 126, 128),
+        border: rgb(83, 101, 85),
+        graph: [rgb(127, 187, 179), rgb(214, 153, 182), rgb(167, 192, 128)],
+    },
+    Theme {
+        name: "ayu-dark",
+        background: rgb(13, 25, 38),
+        foreground: rgb(203, 204, 205),
+        muted: rgb(92, 110, 126),
+        primary: rgb(255, 204, 102),
+        secondary: rgb(198, 120, 221),
+        accent: rgb(115, 218, 202),
+        good: rgb(186, 220, 88),
+        warning: rgb(255, 180, 84),
+        critical: rgb(255, 102, 102),
+        border: rgb(46, 65, 83),
+        graph: [rgb(115, 218, 202), rgb(198, 120, 221), rgb(255, 204, 102)],
+    },
+    Theme {
+        name: "solarized-dark",
+        background: rgb(0, 43, 54),
+        foreground: rgb(131, 148, 150),
+        muted: rgb(88, 110, 117),
+        primary: rgb(38, 139, 210),
+        secondary: rgb(211, 54, 130),
+        accent: rgb(42, 161, 152),
+        good: rgb(133, 153, 0),
+        warning: rgb(181, 137, 0),
+        critical: rgb(220, 50, 47),
+        border: rgb(7, 54, 66),
+        graph: [rgb(42, 161, 152), rgb(211, 54, 130), rgb(38, 139, 210)],
+    },
 ];
 pub fn all() -> &'static [Theme] {
     &THEMES
@@ -152,4 +250,16 @@ pub fn get(name: &str) -> Option<&'static Theme> {
     THEMES
         .iter()
         .find(|theme| theme.name.eq_ignore_ascii_case(name))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::all;
+
+    #[test]
+    fn ships_seventeen_distinct_themes() {
+        assert_eq!(all().len(), 17);
+        assert!(all().iter().any(|theme| theme.name == "rose-pine"));
+        assert!(all().iter().any(|theme| theme.name == "emerald"));
+    }
 }

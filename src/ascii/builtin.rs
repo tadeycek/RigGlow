@@ -1,5 +1,11 @@
 use std::fs;
 
+/// Every shipped logo occupies this exact terminal canvas. It matches the
+/// large EndeavourOS treatment while keeping the left dashboard column stable
+/// when art is switched at runtime.
+pub const CANVAS_WIDTH: usize = 48;
+pub const CANVAS_HEIGHT: usize = 15;
+
 pub fn auto(distro: &str) -> String {
     let distro = distro.to_ascii_lowercase();
     let logo = if distro.contains("endeavour") {
@@ -122,7 +128,65 @@ pub fn named(name: &str) -> Option<String> {
         }
         _ => return None,
     };
-    Some(art.into())
+    Some(normalize(art))
+}
+
+/// Centres an artwork on RigGlow's standard canvas without changing its art.
+/// Wider/taller user-supplied artwork is deliberately preserved instead of
+/// being cropped, while normal artwork is always exactly 48×15 cells.
+pub fn normalize(art: &str) -> String {
+    let lines = art.lines().collect::<Vec<_>>();
+    let input_height = lines.len();
+    let width = lines
+        .iter()
+        .map(|line| visible_width(line))
+        .max()
+        .unwrap_or(0)
+        .max(CANVAS_WIDTH);
+    let height = input_height.max(CANVAS_HEIGHT);
+    let top_padding = (height - input_height) / 2;
+    let art_width = lines
+        .iter()
+        .map(|line| visible_width(line))
+        .max()
+        .unwrap_or(0);
+    // Apply one common left margin to the whole artwork. Individual line
+    // offsets are part of a logo's geometry and must never be re-centred.
+    let left_padding = (width - art_width) / 2;
+    let mut out = Vec::with_capacity(height);
+
+    out.extend(std::iter::repeat_n(" ".repeat(width), top_padding));
+    for line in lines {
+        let line_width = visible_width(line);
+        let right_padding = width.saturating_sub(line_width + left_padding);
+        out.push(format!(
+            "{}{}{}",
+            " ".repeat(left_padding),
+            line,
+            " ".repeat(right_padding)
+        ));
+    }
+    out.extend(std::iter::repeat_n(
+        " ".repeat(width),
+        height - top_padding - input_height,
+    ));
+    out.join("\n")
+}
+
+/// `${theme}` tokens occupy no terminal cells, so normalisation must ignore
+/// them when calculating the visual canvas width.
+fn visible_width(line: &str) -> usize {
+    let mut width = 0;
+    let mut rest = line;
+    while let Some(token_start) = rest.find("${") {
+        width += rest[..token_start].chars().count();
+        let after = &rest[token_start + 2..];
+        let Some(token_end) = after.find('}') else {
+            return width + rest[token_start..].chars().count();
+        };
+        rest = &after[token_end + 1..];
+    }
+    width + rest.chars().count()
 }
 
 pub fn distro_name() -> String {
@@ -171,5 +235,43 @@ mod tests {
             );
         }
         assert_eq!(auto("something else"), named("linux").unwrap());
+    }
+
+    #[test]
+    fn every_builtin_logo_uses_the_same_canvas() {
+        for name in [
+            "arch",
+            "endeavouros",
+            "ubuntu",
+            "fedora",
+            "debian",
+            "mint",
+            "manjaro",
+            "opensuse",
+            "popos",
+            "kali",
+            "nixos",
+            "gentoo",
+            "redhat",
+            "rocky",
+            "almalinux",
+            "void",
+            "solus",
+            "elementary",
+            "zorin",
+            "mx",
+            "linux",
+            "cat",
+            "retro",
+            "rigglow",
+        ] {
+            let art = named(name).expect("built-in art should exist");
+            let lines = art.lines().collect::<Vec<_>>();
+            assert_eq!(lines.len(), CANVAS_HEIGHT, "{name} height");
+            assert!(
+                lines.iter().all(|line| visible_width(line) == CANVAS_WIDTH),
+                "{name} width"
+            );
+        }
     }
 }

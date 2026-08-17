@@ -4,7 +4,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
 pub fn render(frame: &mut Frame, app: &App) {
-    let area = centered(64, 18, frame.area());
+    let area = centered(64, 19, frame.area());
     frame.render_widget(Clear, area);
     let text = vec![
         Line::styled(
@@ -15,6 +15,8 @@ pub fn render(frame: &mut Frame, app: &App) {
         Line::from(" [Q] / [Esc]  Quit"),
         Line::from(" [T]          Cycle themes"),
         Line::from(" [A]          Cycle ASCII art"),
+        Line::from(" [P]          Toggle Top Activity CPU/RAM sort"),
+        Line::from(" Activity CPU: 100% = one fully used logical thread"),
         Line::from(" [G]          Toggle graphs"),
         Line::from(" [L]          Toggle logo"),
         Line::from(" [C]          Compact dashboard"),
