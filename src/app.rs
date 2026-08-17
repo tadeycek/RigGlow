@@ -9,6 +9,7 @@ use crate::{
 pub const HISTORY_LIMIT: usize = 180;
 const STARTUP_SAMPLES: usize = 6;
 const STARTUP_SAMPLE_INTERVAL: Duration = Duration::from_millis(40);
+const NETWORK_SCALE_DECAY: f64 = 0.90;
 
 pub struct App {
     pub settings: Settings,
@@ -18,6 +19,7 @@ pub struct App {
     pub memory_history: VecDeque<f64>,
     pub network_down_history: VecDeque<f64>,
     pub network_up_history: VecDeque<f64>,
+    pub network_graph_max: f64,
     pub show_help: bool,
     pub show_graphs: bool,
     pub show_logo: bool,
@@ -53,6 +55,7 @@ impl App {
             memory_history: VecDeque::new(),
             network_down_history: VecDeque::new(),
             network_up_history: VecDeque::new(),
+            network_graph_max: 1.0,
             theme_index,
             ascii_index: 0,
             cpu: collectors::cpu::LinuxCpuCollector::new(),
@@ -72,7 +75,7 @@ impl App {
         // without inventing a flat history that visibly shifts on every tick.
         for _ in 1..STARTUP_SAMPLES {
             thread::sleep(STARTUP_SAMPLE_INTERVAL);
-            self.refresh_live();
+            self.refresh_live_without_network();
         }
     }
     pub fn theme(&self) -> &'static Theme {
@@ -112,6 +115,14 @@ impl App {
         self.snapshot.static_info.network = self.network.static_info();
     }
     pub fn refresh_live(&mut self) {
+        self.refresh_live_with_network(true);
+    }
+
+    fn refresh_live_without_network(&mut self) {
+        self.refresh_live_with_network(false);
+    }
+
+    fn refresh_live_with_network(&mut self, collect_network: bool) {
         if self.settings.animation {
             self.animation_step = self.animation_step.wrapping_add(1);
         }
@@ -127,7 +138,7 @@ impl App {
         if let Ok(value) = self.disk.refresh_live() {
             self.snapshot.live.disk = value;
         }
-        if let Ok(value) = self.network.refresh_live() {
+        if collect_network && let Ok(value) = self.network.refresh_live() {
             self.snapshot.live.network = value;
         }
         self.snapshot.live.battery = self.battery.collect();
@@ -140,14 +151,14 @@ impl App {
             self.snapshot.live.gpu.usage_percent.unwrap_or(0.0) as f64,
         );
         push(&mut self.memory_history, memory);
-        push(
-            &mut self.network_down_history,
-            self.snapshot.live.network.download_bytes_per_sec,
-        );
-        push(
-            &mut self.network_up_history,
-            self.snapshot.live.network.upload_bytes_per_sec,
-        );
+        if collect_network {
+            let download = self.snapshot.live.network.download_bytes_per_sec;
+            let upload = self.snapshot.live.network.upload_bytes_per_sec;
+            push(&mut self.network_down_history, download);
+            push(&mut self.network_up_history, upload);
+            self.network_graph_max =
+                stable_network_scale(self.network_graph_max, download.max(upload));
+        }
     }
 }
 fn push(history: &mut VecDeque<f64>, sample: f64) {
@@ -157,9 +168,13 @@ fn push(history: &mut VecDeque<f64>, sample: f64) {
     history.push_back(sample);
 }
 
+fn stable_network_scale(previous: f64, observed: f64) -> f64 {
+    observed.max((previous * NETWORK_SCALE_DECAY).max(1.0))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::push;
+    use super::{push, stable_network_scale};
     use std::collections::VecDeque;
 
     #[test]
@@ -171,5 +186,12 @@ mod tests {
         push(&mut history, 58.0);
         assert_eq!(history.len(), 2);
         assert_eq!(history.back(), Some(&58.0));
+    }
+
+    #[test]
+    fn network_scale_rises_immediately_and_decays_smoothly() {
+        let peak = stable_network_scale(1.0, 2_000_000.0);
+        assert_eq!(peak, 2_000_000.0);
+        assert_eq!(stable_network_scale(peak, 100.0), 1_800_000.0);
     }
 }

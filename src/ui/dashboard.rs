@@ -337,7 +337,7 @@ fn performance_panel(frame: &mut Frame, app: &App, area: Rect) {
         app,
     );
     let net = &app.snapshot.live.network;
-    let net_max = decaying_network_peak(app).max(1.0);
+    let net_max = app.network_graph_max;
     widgets::line_chart(
         widgets::LineChartSpec {
             title: format!(
@@ -356,16 +356,6 @@ fn performance_panel(frame: &mut Frame, app: &App, area: Rect) {
         frame,
         app,
     );
-}
-
-fn decaying_network_peak(app: &App) -> f64 {
-    app.network_down_history
-        .iter()
-        .chain(app.network_up_history.iter())
-        .rev()
-        .enumerate()
-        .map(|(age, value)| *value * 0.94_f64.powi(age as i32))
-        .fold(1.0, f64::max)
 }
 
 fn fallback(frame: &mut Frame, app: &App) {

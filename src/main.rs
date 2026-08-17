@@ -92,7 +92,7 @@ fn event_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &mut App,
 ) -> Result<bool> {
-    let mut next_refresh = Instant::now();
+    let mut next_refresh = Instant::now() + Duration::from_millis(app.settings.refresh_rate_ms);
     loop {
         terminal.draw(|frame| ui::dashboard::render(frame, app))?;
         let now = Instant::now();
