@@ -337,18 +337,18 @@ pub fn network_history(
                         zero_row - row - 1,
                     );
                     Span::styled(
-                        braille_from_bottom(dots).to_string(),
+                        block_from_bottom(dots).to_string(),
                         Style::default().fg(app.theme().graph[0]),
                     )
                 } else if row == zero_row {
-                    Span::styled("⠒", Style::default().fg(app.theme().muted))
+                    Span::styled("─", Style::default().fg(app.theme().muted))
                 } else {
                     let dots = dots_from_zero(
                         network_dots(sample.download, (graph_rows - zero_row - 1) * 4),
                         row - zero_row - 1,
                     );
                     Span::styled(
-                        braille_from_top(dots).to_string(),
+                        block_from_top(dots).to_string(),
                         Style::default().fg(app.theme().graph[1]),
                     )
                 }
@@ -493,23 +493,23 @@ fn dots_from_zero(level: usize, cell_from_zero: usize) -> usize {
     level.saturating_sub(cell_from_zero * 4).clamp(0, 4)
 }
 
-fn braille_from_bottom(dots: usize) -> char {
+fn block_from_bottom(dots: usize) -> char {
     match dots {
         0 => ' ',
-        1 => '⡀',
-        2 => '⡄',
-        3 => '⡆',
-        _ => '⡇',
+        1 => '▂',
+        2 => '▄',
+        3 => '▆',
+        _ => '█',
     }
 }
 
-fn braille_from_top(dots: usize) -> char {
+fn block_from_top(dots: usize) -> char {
     match dots {
         0 => ' ',
-        1 => '⠁',
-        2 => '⠃',
-        3 => '⠇',
-        _ => '⡇',
+        1 => '▔',
+        2 => '▀',
+        3 => '█',
+        _ => '█',
     }
 }
 
