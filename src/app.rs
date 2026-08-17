@@ -9,7 +9,6 @@ use crate::{
 pub const HISTORY_LIMIT: usize = 180;
 const STARTUP_SAMPLES: usize = 6;
 const STARTUP_SAMPLE_INTERVAL: Duration = Duration::from_millis(40);
-const NETWORK_SCALE_DECAY: f64 = 0.90;
 
 pub struct App {
     pub settings: Settings,
@@ -169,7 +168,10 @@ fn push(history: &mut VecDeque<f64>, sample: f64) {
 }
 
 fn stable_network_scale(previous: f64, observed: f64) -> f64 {
-    observed.max((previous * NETWORK_SCALE_DECAY).max(1.0))
+    // Keep the coordinate system fixed for this TUI session. A history graph
+    // must shift existing samples left unchanged and append the new one on the
+    // right; shrinking its y-axis would redraw every old point at a new height.
+    previous.max(observed).max(1.0)
 }
 
 #[cfg(test)]
@@ -189,9 +191,10 @@ mod tests {
     }
 
     #[test]
-    fn network_scale_rises_immediately_and_decays_smoothly() {
+    fn network_scale_only_expands_for_a_larger_real_spike() {
         let peak = stable_network_scale(1.0, 2_000_000.0);
         assert_eq!(peak, 2_000_000.0);
-        assert_eq!(stable_network_scale(peak, 100.0), 1_800_000.0);
+        assert_eq!(stable_network_scale(peak, 100.0), peak);
+        assert_eq!(stable_network_scale(peak, 3_000_000.0), 3_000_000.0);
     }
 }
