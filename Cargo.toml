@@ -7,6 +7,8 @@ license = "MIT"
 repository = "https://github.com/tadeycek/RigGlow"
 homepage = "https://github.com/tadeycek/RigGlow"
 readme = "README.md"
+keywords = ["fetch", "sysinfo", "tui", "hardware", "cli"]
+categories = ["command-line-utilities", "visualization"]
 
 [dependencies]
 anyhow = "1.0"
