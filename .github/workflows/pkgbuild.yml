@@ -1,0 +1,36 @@
+name: Validate PKGBUILD
+
+on:
+  push:
+    paths:
+      - "PKGBUILD"
+      - ".github/workflows/pkgbuild.yml"
+  pull_request:
+    paths:
+      - "PKGBUILD"
+      - ".github/workflows/pkgbuild.yml"
+  workflow_dispatch:
+
+jobs:
+  makepkg:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+    steps:
+      - name: Install build dependencies
+        run: pacman -Syu --noconfirm rust git
+
+      - uses: actions/checkout@v4
+
+      - name: Build with makepkg
+        run: |
+          useradd -m builder
+          chown -R builder:builder .
+          su builder -c "makepkg -s --noconfirm --nocheck"
+
+      - name: Verify binary was produced
+        run: |
+          pkgfile=$(find . -maxdepth 1 -name "rigglow-git-*.pkg.tar.*" | head -1)
+          test -n "$pkgfile"
+          echo "Package: $pkgfile"
+          bsdtar -tf "$pkgfile" | grep -q "usr/bin/rigglow"
