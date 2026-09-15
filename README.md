@@ -23,6 +23,22 @@ cargo build --release
 ./target/release/rigglow
 ```
 
+## Install
+
+Via [crates.io](https://crates.io/crates/rigglow):
+
+```bash
+cargo install rigglow
+```
+
+On Arch Linux (or any pacman-based distro), build straight from this repo with the included `PKGBUILD`:
+
+```bash
+git clone https://github.com/tadeycek/RigGlow.git
+cd RigGlow
+makepkg -si
+```
+
 ## Run
 
 ```bash
